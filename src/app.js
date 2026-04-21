@@ -117,11 +117,11 @@ async function buildLeaderboardEmbed(dayKey) {
     .setTimestamp();
 
   if (data.rows.length === 0) {
-    embed.setDescription(`## 📊 THỐNG KÊ THỜI GIAN HỌC\n*Ngày ${dayKey}*\n\n*Chưa có dữ liệu ghi nhận trong ca này.*`);
+    embed.setDescription(`## 📊 Thống Kê Thời Gian Học\n*Ngày ${dayKey}*\n\n*Chưa có dữ liệu ghi nhận trong ca này.*`);
     return embed;
   }
 
-  let desc = `## 📊 THỐNG KÊ THỜI GIAN HỌC\n*Ngày: ${dayKey}*\n\n`;
+  let desc = `## 📊 Thống Kê Thời Gian Học\n*Ngày: ${dayKey}*\n\n`;
   
   await Promise.all(data.rows.map(async (row) => {
     try {
@@ -149,16 +149,20 @@ async function buildLeaderboardEmbed(dayKey) {
 
 // Xây dựng giao diện Embed Đếm Ngược (Dùng UNIX Timestamp của Discord)
 function buildCountdownEmbed() {
-  let desc = `## ⏳ ĐẾM NGƯỢC KỲ THI\n\n`;
+  let desc = `## ⏳ Đếm Ngược Kỳ Thi\n\n`;
+  const now = new Date(); // Lấy thời gian hiện tại
 
   for (const exam of EXAMS) {
     // Chuyển đổi Date sang Unix Timestamp (giây)
     const unixTime = Math.floor(exam.date.getTime() / 1000);
+    const diffTime = exam.date - now;
     
-    if (exam.date > new Date()) {
-      // Dùng <t:time:F> để hiển thị thứ/ngày/tháng/giờ chính xác theo thiết bị user
-      // Dùng <t:time:R> để đếm ngược trực tiếp (in 2 months, in 5 days...)
-      desc += `### ${exam.name}\n└ ⏰ **Thời gian:** <t:${unixTime}:F>\n└ ⏳ **Còn lại:** <t:${unixTime}:R>\n\n`;
+    if (diffTime > 0) {
+      // Tính toán cụ thể số ngày còn lại
+      const days = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+      
+      // Thêm biến ${days} vào chuỗi hiển thị
+      desc += `### ${exam.name}\n└ ⏰ **Thời gian:** <t:${unixTime}:F>\n└ ⏳ **Còn lại:** **${days} ngày** (<t:${unixTime}:R>)\n\n`;
     } else {
       desc += `### ${exam.name}\n└ *Kỳ thi đã diễn ra vào <t:${unixTime}:D>!*\n\n`;
     }
