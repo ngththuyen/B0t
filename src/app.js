@@ -10,7 +10,7 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 const RESULT_CHANNEL_ID = process.env.RESULT_CHANNEL_ID || null;
-const COUNTDOWN_CHANNEL_ID = '1494586446672302095'; // Channel đếm ngược kỳ thi
+const COUNTDOWN_CHANNEL_ID = '1494586446672302095'; 
 const TIMEZONE = 'Asia/Ho_Chi_Minh';
 
 const VOICE_START_TIME = process.env.VOICE_START_TIME || '20:00';
@@ -24,7 +24,7 @@ if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
 
 // Data các kỳ thi quan trọng
 const EXAMS =[
-  { name: 'Kỳ thi Đánh giá Tư duy (VACT) - Đợt 2', date: new Date('2026-05-24T08:30:00+07:00') },
+  { name: 'Kỳ thi Đánh giá Năng Lực (VACT) - Đợt 2', date: new Date('2026-05-24T08:30:00+07:00') },
   { name: 'Kỳ thi Tốt nghiệp THPT Quốc Gia 2026', date: new Date('2026-06-11T07:30:00+07:00') }
 ];
 
@@ -37,7 +37,20 @@ const MOTIVATIONAL_QUOTES =[
   "\"Tương lai thuộc về những người tin vào vẻ đẹp trong những giấc mơ của họ.\" — Eleanor Roosevelt",
   "\"Nơi nào có ý chí, nơi đó có con đường.\" — Pauline Kael",
   "\"Sự nỗ lực trọn vẹn là chiến thắng trọn vẹn.\" — Mahatma Gandhi",
-  "\"Thành công không phải là đích đến, đó là một hành trình.\" — Arthur Ashe"
+  "\"Thành công không phải là đích đến, đó là một hành trình.\" — Arthur Ashe",
+  "\"Đừng sợ thất bại, mà hãy sợ việc không dám thử.\" – Roy T. Bennett",
+  "\"Without hard work, nothing grows but weeds.\" – Gordon B. Hinckley",
+  "\"If your dreams do not scare you, they are not big enough.\" – Ellen Johnson Sirleaf",
+  "\"Sự hài lòng không nằm ở kết quả đạt được, mà ở chính nỗ lực mà chúng ta bỏ ra.\" – Mahatma Gandhi",
+  "\"If we don’t plant knowledge when young, it will give us no shade when we’re old.\" – Chesterfield",
+  "\"Learning without reflection is a wasted effort.\"",
+  "\"Continuous learning is essential because life continuously provides lessons.\"",
+  "\"You can’t learn what you think you already know.\"",
+  "\"Your willingness to learn determines your progress.\"",
+  "\"Học tập là ngọn lửa duy nhất có thể cháy mãi mãi trong tâm hồn một con người.\" - Albert Einstein",
+  "\"Công việc của học tập không phải là nhận biết cái gì đó mới, mà là làm cho chúng ta trở thành người mới.\" - John C. Maxwell",
+  "\"Tri thức là sức mạnh. Học tập là cánh cửa mở ra thế giới mới.\" - Malcolm X",
+  "\"Sự hiểu biết chưa bao giờ là một gánh nặng. Nó là chiếc chìa khóa mở cánh cửa cho sự tự do.\" - Harry S. Truman"
 ];
 
 const pool = new pg.Pool({ connectionString: process.env.POSTGRES_URL });
@@ -86,13 +99,13 @@ async function addVoiceTime(userId, seconds) {
       VALUES ($1, $2, $3)
       ON CONFLICT (day_key, user_id)
       DO UPDATE SET total_seconds = voice_progress.total_seconds + EXCLUDED.total_seconds
-    `,[currentDayKey, userId, seconds]);
+    `, [currentDayKey, userId, seconds]);
   } catch (err) {
     debugLog('DB_ERR', `Lỗi lưu time user ${userId}: ${err.message}`);
   }
 }
 
-// Xây dựng giao diện Embed chung cho lệnh check & reset (Tối ưu UI gọn gàng)
+// Xây dựng giao diện Embed Bảng Xếp Hạng
 async function buildLeaderboardEmbed(dayKey) {
   const data = await pool.query(
     'SELECT user_id, total_seconds FROM voice_progress WHERE day_key = $1 ORDER BY total_seconds DESC',
@@ -100,17 +113,16 @@ async function buildLeaderboardEmbed(dayKey) {
   );
 
   const embed = new EmbedBuilder()
-    .setTitle(`Thống kê Thời gian Học - Ngày ${dayKey}`)
-    .setColor(0x2b2d31) // Màu nền tối thanh lịch của Discord
+    .setColor(0x2b2d31) // Màu nền tối thanh lịch
     .setTimestamp();
 
   if (data.rows.length === 0) {
-    embed.setDescription('*Chưa có dữ liệu ghi nhận trong ngày này.*');
+    embed.setDescription(`## 📊 THỐNG KÊ THỜI GIAN HỌC\n*Ngày ${dayKey}*\n\n*Chưa có dữ liệu ghi nhận trong ca này.*`);
     return embed;
   }
 
-  let desc = '';
-  // Load toàn bộ username song song để tăng tốc độ
+  let desc = `## 📊 THỐNG KÊ THỜI GIAN HỌC\n*Ngày: ${dayKey}*\n\n`;
+  
   await Promise.all(data.rows.map(async (row) => {
     try {
       const user = await client.users.fetch(row.user_id);
@@ -121,45 +133,41 @@ async function buildLeaderboardEmbed(dayKey) {
   }));
 
   data.rows.forEach((row, index) => {
-    const hours = Math.floor(row.total_seconds / 3600);
-    const mins = Math.floor((row.total_seconds % 3600) / 60);
+    const hours = String(Math.floor(row.total_seconds / 3600)).padStart(2, '0');
+    const mins = String(Math.floor((row.total_seconds % 3600) / 60)).padStart(2, '0');
     const totalMin = Math.floor(row.total_seconds / 60);
-    const status = totalMin >= 150 ? 'Đạt chỉ tiêu' : 'Chưa đạt';
+    const status = totalMin >= 150 ? 'Đạt' : 'Chưa đạt';
     
-    // Icon Top 3 tối giản
     const rank = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `**${index + 1}.**`;
 
-    desc += `${rank} **${row.username}**\n└ Thời gian: ${hours}h ${mins}m — *${status}*\n\n`;
+    desc += `${rank} **${row.username}**\n└ ⏱️ ${hours}h ${mins}m — *${status}*\n\n`;
   });
 
   embed.setDescription(desc.trim());
   return embed;
 }
 
-// Xây dựng giao diện Embed Đếm ngược
+// Xây dựng giao diện Embed Đếm Ngược (Dùng UNIX Timestamp của Discord)
 function buildCountdownEmbed() {
-  const now = new Date();
-  let desc = '';
+  let desc = `## ⏳ ĐẾM NGƯỢC KỲ THI\n\n`;
 
   for (const exam of EXAMS) {
-    const diffTime = exam.date - now;
-    if (diffTime > 0) {
-      const days = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-      const hours = Math.floor((diffTime % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-      const dateStr = exam.date.toLocaleDateString('vi-VN', { timeZone: TIMEZONE });
-      const timeStr = exam.date.toLocaleTimeString('vi-VN', { timeZone: TIMEZONE, hour: '2-digit', minute: '2-digit' });
-      
-      desc += `**${exam.name}**\n└ Còn lại: **${days} ngày, ${hours} giờ** *(Lúc ${timeStr} ngày ${dateStr})*\n\n`;
+    // Chuyển đổi Date sang Unix Timestamp (giây)
+    const unixTime = Math.floor(exam.date.getTime() / 1000);
+    
+    if (exam.date > new Date()) {
+      // Dùng <t:time:F> để hiển thị thứ/ngày/tháng/giờ chính xác theo thiết bị user
+      // Dùng <t:time:R> để đếm ngược trực tiếp (in 2 months, in 5 days...)
+      desc += `### ${exam.name}\n└ ⏰ **Thời gian:** <t:${unixTime}:F>\n└ ⏳ **Còn lại:** <t:${unixTime}:R>\n\n`;
     } else {
-      desc += `**${exam.name}**\n└ *Kỳ thi đã diễn ra!*\n\n`;
+      desc += `### ${exam.name}\n└ *Kỳ thi đã diễn ra vào <t:${unixTime}:D>!*\n\n`;
     }
   }
 
   const quote = MOTIVATIONAL_QUOTES[Math.floor(Math.random() * MOTIVATIONAL_QUOTES.length)];
 
   return new EmbedBuilder()
-    .setTitle('⏳ ĐẾM NGƯỢC KỲ THI')
-    .setColor(0x5865f2) // Xanh Discord dịu mắt
+    .setColor(0x5865f2) 
     .setDescription(desc.trim())
     .setFooter({ text: quote });
 }
@@ -170,8 +178,8 @@ function getTrackingState() {
   const localNow = new Date(now.toLocaleString('en-US', { timeZone: TIMEZONE }));
   const currentMins = localNow.getHours() * 60 + localNow.getMinutes();
 
-  const [sH, sM] = VOICE_START_TIME.split(':').map(Number);
-  const [eH, eM] = VOICE_END_TIME.split(':').map(Number);
+  const[sH, sM] = VOICE_START_TIME.split(':').map(Number);
+  const[eH, eM] = VOICE_END_TIME.split(':').map(Number);
   const startMins = sH * 60 + sM;
   const endMins = eH * 60 + eM;
 
@@ -202,7 +210,7 @@ async function startTrackingSession(dayKeyStr) {
     guild.members.cache.forEach(member => {
       if (member.voice?.channelId) voiceStartTimes.set(member.id, new Date());
     });
-    debugLog('TRACKING', `Khởi động ca học ngày: ${currentDayKey} | Đang có ${voiceStartTimes.size} user trong voice`);
+    debugLog('TRACKING', `Khởi động ca học: ${currentDayKey} | ${voiceStartTimes.size} user đang trực tuyến`);
   }
 }
 
@@ -216,7 +224,7 @@ cron.schedule(parseTimeToCron(VOICE_START_TIME), async () => {
 // 2. Cron kết thúc giờ học
 cron.schedule(parseTimeToCron(VOICE_END_TIME), async () => {
   const promises = [];
-  for (const [userId, startTime] of voiceStartTimes.entries()) {
+  for (const[userId, startTime] of voiceStartTimes.entries()) {
     const seconds = Math.floor((Date.now() - startTime.getTime()) / 1000);
     promises.push(addVoiceTime(userId, seconds));
   }
@@ -242,11 +250,11 @@ cron.schedule('*/5 * * * *', async () => {
   if (voiceStartTimes.size === 0 || !activePeriod) return;
   
   let savedCount = 0;
-  for (const [userId, startTime] of [...voiceStartTimes.entries()]) {
+  for (const [userId, startTime] of[...voiceStartTimes.entries()]) {
     const elapsedSeconds = Math.floor((Date.now() - startTime.getTime()) / 1000);
     if (elapsedSeconds >= 60) {
       await addVoiceTime(userId, elapsedSeconds);
-      voiceStartTimes.set(userId, new Date()); // Reset thời gian mốc
+      voiceStartTimes.set(userId, new Date()); 
       savedCount++;
     }
   }
@@ -257,7 +265,7 @@ cron.schedule('*/5 * * * *', async () => {
 cron.schedule('0 0 * * *', async () => {
   const channel = client.channels.cache.get(COUNTDOWN_CHANNEL_ID);
   if (channel) {
-    await channel.send({ embeds: [buildCountdownEmbed()] });
+    await channel.send({ embeds:[buildCountdownEmbed()] });
     debugLog('COUNTDOWN', 'Đã gửi thông báo đếm ngược lúc nửa đêm.');
   } else {
     debugLog('COUNTDOWN', 'Không tìm thấy kênh đếm ngược.');
@@ -265,7 +273,6 @@ cron.schedule('0 0 * * *', async () => {
 }, { timezone: TIMEZONE });
 
 // ====================== SỰ KIỆN BOT ======================
-// Lắng nghe ra/vào voice channel
 client.on('voiceStateUpdate', async (oldState, newState) => {
   if (!activePeriod || !newState.member || newState.guild.id !== GUILD_ID) return;
 
@@ -274,9 +281,8 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
   const isInVoice  = !!newState.channelId;
 
   if (!wasInVoice && isInVoice) {
-    voiceStartTimes.set(userId, new Date()); // Vào phòng
+    voiceStartTimes.set(userId, new Date()); 
   } else if (wasInVoice && !isInVoice) {
-    // Thoát phòng
     if (voiceStartTimes.has(userId)) {
       const start = voiceStartTimes.get(userId);
       const seconds = Math.floor((Date.now() - start.getTime()) / 1000);
@@ -286,7 +292,6 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
   }
 });
 
-// Lắng nghe lệnh Slash Commands
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
@@ -307,20 +312,17 @@ client.on('interactionCreate', async interaction => {
     }
   }
 
-  // Lệnh dành riêng cho Admin để test bảng Countdown
   if (interaction.commandName === 'debug') {
     await interaction.reply({ embeds: [buildCountdownEmbed()] });
   }
 });
 
-// Khởi chạy
 client.once('ready', async () => {
   console.log('='.repeat(50));
   debugLog('READY', `Bot ${client.user.tag} đã online!`);
   
   await initDB();
 
-  // Đăng ký lệnh cho Bot
   const commands =[
     new SlashCommandBuilder()
       .setName('check')
@@ -328,7 +330,7 @@ client.once('ready', async () => {
     new SlashCommandBuilder()
       .setName('debug')
       .setDescription('[Admin] Kiểm tra giao diện bảng đếm ngược')
-      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator) // Chỉ Admin mới được dùng
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator) 
   ];
 
   const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -339,7 +341,6 @@ client.once('ready', async () => {
     debugLog('ERR', 'Lỗi đăng ký lệnh: ' + error.message);
   }
 
-  // Phục hồi trạng thái tracking nếu bot restart giữa chừng
   const { isActive, dayKey } = getTrackingState();
   if (isActive) {
     debugLog('RECOVER', `Khôi phục tiến trình tracking cho ngày ${dayKey}`);
@@ -349,7 +350,6 @@ client.once('ready', async () => {
   console.log('='.repeat(50));
 });
 
-// Bắt lỗi rác để tránh sập bot
 process.on('unhandledRejection', (reason) => {
   debugLog('CRITICAL_ERR', `Unhandled Rejection: ${reason}`);
 });
