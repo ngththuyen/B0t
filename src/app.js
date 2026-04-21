@@ -1,7 +1,8 @@
-import { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, REST, Routes, PermissionFlagsBits } from 'discord.js';
+import { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, REST, Routes, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import dotenv from 'dotenv';
 import cron from 'node-cron';
 import pg from 'pg';
+import fs from 'fs/promises';
 
 dotenv.config();
 
@@ -21,37 +22,6 @@ if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
   console.error('❌ Thiếu DISCORD_TOKEN, CLIENT_ID hoặc GUILD_ID trong Variables');
   process.exit(1);
 }
-
-// Data các kỳ thi quan trọng
-const EXAMS =[
-  { name: 'Kỳ thi Đánh giá Năng Lực (VACT) - Đợt 2', date: new Date('2026-05-24T08:30:00+07:00') },
-  { name: 'Kỳ thi Tốt nghiệp THPT Quốc Gia 2026', date: new Date('2026-06-11T07:30:00+07:00') }
-];
-
-// Trích dẫn truyền cảm hứng
-const MOTIVATIONAL_QUOTES =[
-  "\"Thiên tài 1% là cảm hứng và 99% là mồ hôi.\" — Thomas Edison",
-  "\"Kẻ duy nhất bạn nên cố gắng để giỏi hơn, chính là bạn của ngày hôm qua.\" — Sigmund Freud",
-  "\"Không có giới hạn nào cho những gì chúng ta có thể đạt được, ngoại trừ giới hạn do chính chúng ta tạo ra.\" — Khuyết danh",
-  "\"Giáo dục là vũ khí mạnh nhất mà bạn có thể dùng để thay đổi thế giới.\" — Nelson Mandela",
-  "\"Tương lai thuộc về những người tin vào vẻ đẹp trong những giấc mơ của họ.\" — Eleanor Roosevelt",
-  "\"Nơi nào có ý chí, nơi đó có con đường.\" — Pauline Kael",
-  "\"Sự nỗ lực trọn vẹn là chiến thắng trọn vẹn.\" — Mahatma Gandhi",
-  "\"Thành công không phải là đích đến, đó là một hành trình.\" — Arthur Ashe",
-  "\"Đừng sợ thất bại, mà hãy sợ việc không dám thử.\" – Roy T. Bennett",
-  "\"Without hard work, nothing grows but weeds.\" – Gordon B. Hinckley",
-  "\"If your dreams do not scare you, they are not big enough.\" – Ellen Johnson Sirleaf",
-  "\"Sự hài lòng không nằm ở kết quả đạt được, mà ở chính nỗ lực mà chúng ta bỏ ra.\" – Mahatma Gandhi",
-  "\"If we don’t plant knowledge when young, it will give us no shade when we’re old.\" – Chesterfield",
-  "\"Learning without reflection is a wasted effort.\"",
-  "\"Continuous learning is essential because life continuously provides lessons.\"",
-  "\"You can’t learn what you think you already know.\"",
-  "\"Your willingness to learn determines your progress.\"",
-  "\"Học tập là ngọn lửa duy nhất có thể cháy mãi mãi trong tâm hồn một con người.\" - Albert Einstein",
-  "\"Công việc của học tập không phải là nhận biết cái gì đó mới, mà là làm cho chúng ta trở thành người mới.\" - John C. Maxwell",
-  "\"Tri thức là sức mạnh. Học tập là cánh cửa mở ra thế giới mới.\" - Malcolm X",
-  "\"Sự hiểu biết chưa bao giờ là một gánh nặng. Nó là chiếc chìa khóa mở cánh cửa cho sự tự do.\" - Harry S. Truman"
-];
 
 const pool = new pg.Pool({ connectionString: process.env.POSTGRES_URL });
 
@@ -78,6 +48,20 @@ function parseTimeToCron(timeStr) {
   return `${m} ${h} * * *`;
 }
 
+// Hàm đọc và ghi file JSON cho Daily Quiz
+async function loadJSON(filename) {
+  try {
+    const data = await fs.readFile(filename, 'utf-8');
+    return JSON.parse(data);
+  } catch (err) {
+    return[];
+  }
+}
+
+async function saveJSON(filename, data) {
+  await fs.writeFile(filename, JSON.stringify(data, null, 2), 'utf-8');
+}
+
 // ====================== DATABASE & THỐNG KÊ ======================
 async function initDB() {
   await pool.query(`
@@ -99,29 +83,25 @@ async function addVoiceTime(userId, seconds) {
       VALUES ($1, $2, $3)
       ON CONFLICT (day_key, user_id)
       DO UPDATE SET total_seconds = voice_progress.total_seconds + EXCLUDED.total_seconds
-    `, [currentDayKey, userId, seconds]);
+    `,[currentDayKey, userId, seconds]);
   } catch (err) {
     debugLog('DB_ERR', `Lỗi lưu time user ${userId}: ${err.message}`);
   }
 }
 
-// Xây dựng giao diện Embed Bảng Xếp Hạng
 async function buildLeaderboardEmbed(dayKey) {
   const data = await pool.query(
-    'SELECT user_id, total_seconds FROM voice_progress WHERE day_key = $1 ORDER BY total_seconds DESC',
-    [dayKey]
+    'SELECT user_id, total_seconds FROM voice_progress WHERE day_key = $1 ORDER BY total_seconds DESC',[dayKey]
   );
 
-  const embed = new EmbedBuilder()
-    .setColor(0x2b2d31) // Màu nền tối thanh lịch
-    .setTimestamp();
+  const embed = new EmbedBuilder().setColor(0x2b2d31).setTimestamp();
 
   if (data.rows.length === 0) {
-    embed.setDescription(`## 📊 Thống Kê Thời Gian Học\n*Ngày ${dayKey}*\n\n*Chưa có dữ liệu ghi nhận trong ca này.*`);
+    embed.setDescription(`## 📊 THỐNG KÊ THỜI GIAN HỌC\n*Ngày ${dayKey}*\n\n*Chưa có dữ liệu ghi nhận trong ca này.*`);
     return embed;
   }
 
-  let desc = `## 📊 Thống Kê Thời Gian Học\n*Ngày: ${dayKey}*\n\n`;
+  let desc = `## 📊 THỐNG KÊ THỜI GIAN HỌC\n*Ngày: ${dayKey}*\n\n`;
   
   await Promise.all(data.rows.map(async (row) => {
     try {
@@ -137,9 +117,7 @@ async function buildLeaderboardEmbed(dayKey) {
     const mins = String(Math.floor((row.total_seconds % 3600) / 60)).padStart(2, '0');
     const totalMin = Math.floor(row.total_seconds / 60);
     const status = totalMin >= 150 ? 'Đạt' : 'Chưa đạt';
-    
     const rank = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `**${index + 1}.**`;
-
     desc += `${rank} **${row.username}**\n└ ⏱️ ${hours}h ${mins}m — *${status}*\n\n`;
   });
 
@@ -147,34 +125,50 @@ async function buildLeaderboardEmbed(dayKey) {
   return embed;
 }
 
-// Xây dựng giao diện Embed Đếm Ngược (Dùng UNIX Timestamp của Discord)
-function buildCountdownEmbed() {
-  let desc = `## ⏳ Đếm Ngược Kỳ Thi\n\n`;
-  const now = new Date(); // Lấy thời gian hiện tại
+// ====================== DAILY QUIZ SYSTEM ======================
+async function sendDailyQuiz(channelId = COUNTDOWN_CHANNEL_ID) {
+  const channel = client.channels.cache.get(channelId);
+  if (!channel) return debugLog('QUIZ', 'Không tìm thấy kênh Quiz.');
 
-  for (const exam of EXAMS) {
-    // Chuyển đổi Date sang Unix Timestamp (giây)
-    const unixTime = Math.floor(exam.date.getTime() / 1000);
-    const diffTime = exam.date - now;
-    
-    if (diffTime > 0) {
-      // Tính toán cụ thể số ngày còn lại
-      const days = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-      
-      // Thêm biến ${days} vào chuỗi hiển thị
-      desc += `### ${exam.name}\n└ ⏰ **Thời gian:** <t:${unixTime}:F>\n└ ⏳ **Còn lại:** **${days} ngày** (<t:${unixTime}:R>)\n\n`;
-    } else {
-      desc += `### ${exam.name}\n└ *Kỳ thi đã diễn ra vào <t:${unixTime}:D>!*\n\n`;
-    }
+  const questions = await loadJSON('questions.json');
+  if (questions.length === 0) {
+    debugLog('QUIZ', 'Ngân hàng câu hỏi đã hết!');
+    return;
   }
 
-  const quote = MOTIVATIONAL_QUOTES[Math.floor(Math.random() * MOTIVATIONAL_QUOTES.length)];
+  // Bốc câu đầu tiên và xóa khỏi mảng
+  const q = questions.shift(); 
+  await saveJSON('questions.json', questions); // Lưu lại mảng đã xóa
 
-  return new EmbedBuilder()
-    .setColor(0x5865f2) 
-    .setDescription(desc.trim())
-    .setFooter({ text: quote });
+  // Đưa câu hỏi vừa bốc vào lịch sử để kiểm tra đáp án sau này
+  const history = await loadJSON('history_quizzes.json');
+  history.push(q);
+  await saveJSON('history_quizzes.json', history);
+
+  const embed = new EmbedBuilder()
+    .setTitle(`📝 DAILY QUIZ: MÔN ${q.subject.toUpperCase()}`)
+    .setColor(0xffcc00)
+    .setDescription(`**${q.question}**\n\n**A.** ${q.options.A}\n**B.** ${q.options.B}\n**C.** ${q.options.C}\n**D.** ${q.options.D}`)
+    .setFooter({ text: 'Hãy chọn đáp án bên dưới nhé. Kết quả chỉ hiển thị với riêng bạn!' });
+
+  if (q.image_url) {
+    embed.setImage(q.image_url);
+  }
+
+  // Tạo hàng nút bấm ABCD
+  const row = new ActionRowBuilder().addComponents(
+    ['A', 'B', 'C', 'D'].map(opt => 
+      new ButtonBuilder()
+        .setCustomId(`quiz_${q.id}_${opt}`)
+        .setLabel(opt)
+        .setStyle(ButtonStyle.Primary)
+    )
+  );
+
+  await channel.send({ embeds: [embed], components: [row] });
+  debugLog('QUIZ', `Đã gửi câu hỏi ${q.id} lên kênh.`);
 }
+
 
 // ====================== XỬ LÝ THỜI GIAN & TRACKING ======================
 function getTrackingState() {
@@ -219,15 +213,13 @@ async function startTrackingSession(dayKeyStr) {
 }
 
 // ====================== CRON JOBS ======================
-// 1. Cron bắt đầu tính giờ học
 cron.schedule(parseTimeToCron(VOICE_START_TIME), async () => {
   const { dayKey } = getTrackingState();
   await startTrackingSession(dayKey);
 }, { timezone: TIMEZONE });
 
-// 2. Cron kết thúc giờ học
 cron.schedule(parseTimeToCron(VOICE_END_TIME), async () => {
-  const promises = [];
+  const promises =[];
   for (const[userId, startTime] of voiceStartTimes.entries()) {
     const seconds = Math.floor((Date.now() - startTime.getTime()) / 1000);
     promises.push(addVoiceTime(userId, seconds));
@@ -238,48 +230,35 @@ cron.schedule(parseTimeToCron(VOICE_END_TIME), async () => {
   debugLog('TRACKING', 'Đã kết thúc ca học và chốt sổ dữ liệu.');
 }, { timezone: TIMEZONE });
 
-// 3. Cron gửi tổng kết (RESET_TIME)
 cron.schedule(parseTimeToCron(RESET_TIME), async () => {
   if (!currentDayKey || !RESULT_CHANNEL_ID) return;
   const channel = client.channels.cache.get(RESULT_CHANNEL_ID);
   if (channel) {
     const embed = await buildLeaderboardEmbed(currentDayKey);
     await channel.send({ embeds: [embed] });
-    debugLog('RESULT', `Đã gửi bảng thành tích ngày ${currentDayKey}`);
   }
 }, { timezone: TIMEZONE });
 
-// 4. Cron Auto-Save (Mỗi 5 phút)
 cron.schedule('*/5 * * * *', async () => {
   if (voiceStartTimes.size === 0 || !activePeriod) return;
-  
-  let savedCount = 0;
   for (const [userId, startTime] of[...voiceStartTimes.entries()]) {
     const elapsedSeconds = Math.floor((Date.now() - startTime.getTime()) / 1000);
     if (elapsedSeconds >= 60) {
       await addVoiceTime(userId, elapsedSeconds);
       voiceStartTimes.set(userId, new Date()); 
-      savedCount++;
     }
   }
-  if (savedCount > 0) debugLog('AUTO-SAVE', `Đã đồng bộ thời gian cho ${savedCount} users.`);
 }, { timezone: TIMEZONE });
 
-// 5. Cron gửi Countdown Kỳ thi (00:00 mỗi ngày)
-cron.schedule('0 0 * * *', async () => {
-  const channel = client.channels.cache.get(COUNTDOWN_CHANNEL_ID);
-  if (channel) {
-    await channel.send({ embeds:[buildCountdownEmbed()] });
-    debugLog('COUNTDOWN', 'Đã gửi thông báo đếm ngược lúc nửa đêm.');
-  } else {
-    debugLog('COUNTDOWN', 'Không tìm thấy kênh đếm ngược.');
-  }
+// Cron chạy Daily Quiz vào 5 khung giờ mỗi ngày: 6h, 10h, 14h, 18h, 21h
+cron.schedule('0 6,10,14,18,21 * * *', async () => {
+  debugLog('CRON', 'Tới giờ gửi Daily Quiz!');
+  await sendDailyQuiz();
 }, { timezone: TIMEZONE });
 
 // ====================== SỰ KIỆN BOT ======================
 client.on('voiceStateUpdate', async (oldState, newState) => {
   if (!activePeriod || !newState.member || newState.guild.id !== GUILD_ID) return;
-
   const userId = newState.member.id;
   const wasInVoice = !!oldState.channelId;
   const isInVoice  = !!newState.channelId;
@@ -297,27 +276,51 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 });
 
 client.on('interactionCreate', async interaction => {
+  // 1. Xử lý khi nhấn nút Đáp Án Quiz
+  if (interaction.isButton() && interaction.customId.startsWith('quiz_')) {
+    // Tách Custom ID: VD "quiz_VN_10_B" => qId = "VN_10", chosen = "B"
+    const parts = interaction.customId.split('_');
+    const chosen = parts.pop(); // Lấy chữ cái cuối cùng (A, B, C, D)
+    const qId = parts.slice(1).join('_'); // Lấy mã câu hỏi
+
+    const history = await loadJSON('history_quizzes.json');
+    const q = history.find(x => x.id === qId);
+
+    if (!q) {
+      return interaction.reply({ content: '❌ Rất tiếc, câu hỏi này đã hết hạn hoặc bị lỗi dữ liệu!', ephemeral: true });
+    }
+
+    const isCorrect = chosen === q.correct;
+    
+    const replyEmbed = new EmbedBuilder()
+      .setTitle(isCorrect ? '✅ CHÍNH XÁC! TUYỆT VỜI!' : '❌ RẤT TIẾC, SAI RỒI!')
+      .setColor(isCorrect ? 0x00ff88 : 0xff3333)
+      .setDescription(`Bạn đã chọn **${chosen}**. Đáp án đúng là: **${q.correct}**.\n\n### 📖 Giải thích:\n${q.explanation}`);
+
+    // Tham số ephemeral: true sẽ giúp tin nhắn chỉ hiển thị riêng tư cho người vừa nhấn nút
+    await interaction.reply({ embeds: [replyEmbed], ephemeral: true });
+    return;
+  }
+
+  // 2. Xử lý Slash Commands
   if (!interaction.isChatInputCommand()) return;
 
   if (interaction.commandName === 'check') {
     try {
       const res = await pool.query('SELECT day_key FROM voice_progress ORDER BY day_key DESC LIMIT 1');
       const targetDayKey = currentDayKey || res.rows[0]?.day_key;
-
-      if (!targetDayKey) {
-        return interaction.reply({ content: '📭 Chưa có dữ liệu ghi nhận.', ephemeral: true });
-      }
-
+      if (!targetDayKey) return interaction.reply({ content: '📭 Chưa có dữ liệu ghi nhận.', ephemeral: true });
       const embed = await buildLeaderboardEmbed(targetDayKey);
       await interaction.reply({ embeds: [embed] });
     } catch (err) {
-      debugLog('CMD_ERR', `Lỗi lệnh /check: ${err.message}`);
       await interaction.reply({ content: '❌ Lỗi hệ thống, vui lòng thử lại sau.', ephemeral: true });
     }
   }
 
   if (interaction.commandName === 'debug') {
-    await interaction.reply({ embeds: [buildCountdownEmbed()] });
+    // Chuyển /debug thành lệnh test Quiz
+    await interaction.reply({ content: '⏳ Đang khởi tạo Daily Quiz...', ephemeral: true });
+    await sendDailyQuiz(interaction.channelId); // Gửi thẳng vào kênh vừa gõ lệnh để Admin test
   }
 });
 
@@ -333,24 +336,22 @@ client.once('ready', async () => {
       .setDescription('Xem thống kê thời gian học của ca hiện tại'),
     new SlashCommandBuilder()
       .setName('debug')
-      .setDescription('[Admin] Kiểm tra giao diện bảng đếm ngược')
+      .setDescription('[Admin] Test giao diện Daily Quiz')
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator) 
   ];
 
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
     await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-    debugLog('READY', 'Đã đăng ký hệ thống Slash Commands (/check, /debug)');
+    debugLog('READY', 'Đã đăng ký lệnh (/check, /debug)');
   } catch (error) {
     debugLog('ERR', 'Lỗi đăng ký lệnh: ' + error.message);
   }
 
   const { isActive, dayKey } = getTrackingState();
   if (isActive) {
-    debugLog('RECOVER', `Khôi phục tiến trình tracking cho ngày ${dayKey}`);
     await startTrackingSession(dayKey);
   }
-  
   console.log('='.repeat(50));
 });
 
