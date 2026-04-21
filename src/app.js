@@ -44,7 +44,7 @@ const endCronExpr   = parseTimeToCron(VOICE_END_TIME);
 const resetCronExpr = parseTimeToCron(RESET_TIME);
 
 const client = new Client({
-  intents: [
+  intents:[
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.GuildMembers,
@@ -61,7 +61,7 @@ function nowStr() {
 }
 
 function debugLog(emoji, section, msg) {
-  console.log(`${emoji} [${nowStr()}] [${section}] ${msg}`);
+  console.log(`${emoji}[${nowStr()}] [${section}] ${msg}`);
 }
 
 // ====================== DATABASE ======================
@@ -104,8 +104,6 @@ async function addVoiceTime(userId, seconds) {
 async function autoSaveVoiceTime() {
   debugLog('🔍', 'AUTO-SAVE', `Bắt đầu auto-save | activePeriod=${activePeriod} | voiceStartTimes.size=${voiceStartTimes.size}`);
 
-  // BUG FIX #2: Dùng snapshot của voiceStartTimes để tránh race condition với endCron
-  // Vẫn lưu ngay cả khi activePeriod vừa tắt, để không mất dữ liệu
   if (voiceStartTimes.size === 0) {
     debugLog('ℹ️', 'AUTO-SAVE', 'Không có ai đang tracking → bỏ qua');
     return;
@@ -117,24 +115,19 @@ async function autoSaveVoiceTime() {
     return;
   }
 
-  const saved = [];
+  const saved =[];
   const removed = [];
   const skipped = [];
 
-  for (const [userId, startTime] of [...voiceStartTimes.entries()]) {
+  for (const [userId, startTime] of[...voiceStartTimes.entries()]) {
     const elapsedSeconds = Math.floor((Date.now() - startTime.getTime()) / 1000);
-    debugLog('🔎', 'AUTO-SAVE', `Kiểm tra userId=${userId} | elapsed=${elapsedSeconds}s`);
 
-    // BUG FIX #1: fetch member thay vì chỉ dùng cache
-    // → tránh trường hợp member không có trong cache bị xóa oan
     let member = guild.members.cache.get(userId);
     if (!member) {
       debugLog('⚠️', 'AUTO-SAVE', `userId=${userId} không có trong cache → thử fetch...`);
       try {
         member = await guild.members.fetch(userId);
-        debugLog('✅', 'AUTO-SAVE', `Fetch thành công userId=${userId} (${member.user.username})`);
       } catch (err) {
-        // Nếu fetch lỗi (user rời server), xóa khỏi tracking
         debugLog('❌', 'AUTO-SAVE', `Fetch thất bại userId=${userId}: ${err.message} → xóa khỏi tracking`);
         voiceStartTimes.delete(userId);
         removed.push(userId);
@@ -153,18 +146,15 @@ async function autoSaveVoiceTime() {
         const secs = elapsedSeconds % 60;
         saved.push(`${username} (+${minutes}p${secs}s)`);
       } else {
-        debugLog('⏩', 'AUTO-SAVE', `Bỏ qua ${username}: chỉ có ${elapsedSeconds}s < 60s`);
         skipped.push(`${username} (${elapsedSeconds}s)`);
       }
     } else {
-      // User đang không ở trong voice → xóa, thời gian đã được lưu khi rời kênh qua voiceStateUpdate
       debugLog('🚪', 'AUTO-SAVE', `${username} không còn trong voice → xóa khỏi tracking`);
       voiceStartTimes.delete(userId);
       removed.push(username);
     }
   }
 
-  // Tổng kết auto-save
   console.log('─'.repeat(60));
   if (saved.length > 0)    debugLog('💾', 'AUTO-SAVE', `✔ Đã lưu: ${saved.join(' | ')}`);
   if (skipped.length > 0)  debugLog('⏩', 'AUTO-SAVE', `⊘ Bỏ qua (< 1 phút): ${skipped.join(' | ')}`);
@@ -178,24 +168,16 @@ async function autoSaveVoiceTime() {
 
 // ====================== HÀM GỬI BẢNG KẾT QUẢ ======================
 async function sendResultEmbed() {
-  if (!currentDayKey || !RESULT_CHANNEL_ID) {
-    debugLog('⚠️', 'RESULT', `Bỏ qua gửi kết quả | currentDayKey=${currentDayKey} | RESULT_CHANNEL_ID=${RESULT_CHANNEL_ID}`);
-    return;
-  }
+  if (!currentDayKey || !RESULT_CHANNEL_ID) return;
 
   const channel = client.channels.cache.get(RESULT_CHANNEL_ID);
-  if (!channel) {
-    debugLog('❌', 'RESULT', `Không tìm thấy channel ID: ${RESULT_CHANNEL_ID}`);
-    return;
-  }
+  if (!channel) return;
 
   try {
     const data = await pool.query(
       'SELECT user_id, total_seconds FROM voice_progress WHERE day_key = $1 ORDER BY total_seconds DESC',
       [currentDayKey]
     );
-
-    debugLog('📋', 'RESULT', `Tổng ${data.rows.length} user trong ngày ${currentDayKey}`);
 
     const embed = new EmbedBuilder()
       .setTitle(`📊 KẾT QUẢ VOICE - ${currentDayKey}`)
@@ -207,21 +189,18 @@ async function sendResultEmbed() {
       const totalMin = Math.floor(row.total_seconds / 60);
       const hours = Math.floor(totalMin / 60);
       const mins = totalMin % 60;
-      const timeStr = `${hours}h ${mins}m`;
       const status = totalMin >= 150 ? '✅ **Hoàn thành**' : '⏳ Chưa hoàn thành';
 
       let username = row.user_id;
       try {
         const member = await client.guilds.cache.get(GUILD_ID).members.fetch(row.user_id);
         username = member.user.username;
-      } catch {
-        debugLog('⚠️', 'RESULT', `Không fetch được username cho userId=${row.user_id}`);
-      }
+      } catch {}
 
-      desc += `**${username}** — ${timeStr} — ${status}\n`;
+      desc += `**${username}** — ${hours}h ${mins}m — ${status}\n`;
     }
 
-    embed.setDescription(desc || 'Chưa có ai tham gia voice trong ngày này.');
+    embed.setDescription(desc || 'Chưa có ai tham gia voice trong ca này.');
     await channel.send({ embeds: [embed] });
     debugLog('📤', 'RESULT', `Đã gửi bảng kết quả ngày ${currentDayKey}`);
   } catch (err) {
@@ -229,27 +208,54 @@ async function sendResultEmbed() {
   }
 }
 
-// ====================== CRON JOBS ======================
-const getDayKey = () => {
+// ====================== HELPER THỜI GIAN & KHÔI PHỤC ======================
+function getTrackingState() {
   const now = new Date();
-  const local = new Date(now.toLocaleString('en-US', { timeZone: TIMEZONE }));
-  return `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, '0')}-${String(local.getDate()).padStart(2, '0')}`;
-};
+  const localNow = new Date(now.toLocaleString('en-US', { timeZone: TIMEZONE }));
+  const currentHour = localNow.getHours();
+  const currentMin = localNow.getMinutes();
+  const currentTime = currentHour * 60 + currentMin;
 
-// 1. Bắt đầu tracking
-cron.schedule(startCronExpr, async () => {
-  currentDayKey = getDayKey();
+  const[startH, startM] = VOICE_START_TIME.split(':').map(Number);
+  const[endH, endM] = VOICE_END_TIME.split(':').map(Number);
+
+  const startTimeInMins = startH * 60 + startM;
+  const endTimeInMins = endH * 60 + endM;
+
+  let isActive = false;
+  let dayOffset = 0;
+
+  if (startTimeInMins < endTimeInMins) {
+    isActive = currentTime >= startTimeInMins && currentTime < endTimeInMins;
+  } else {
+    // Xuyên đêm
+    if (currentTime >= startTimeInMins) {
+      isActive = true; 
+    } else if (currentTime < endTimeInMins) {
+      isActive = true; 
+      dayOffset = -1; // Lùi về ca ngày hôm qua
+    }
+  }
+
+  const targetDate = new Date(localNow);
+  targetDate.setDate(targetDate.getDate() + dayOffset);
+  const dayKey = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}-${String(targetDate.getDate()).padStart(2, '0')}`;
+
+  return { isActive, dayKey };
+}
+
+async function startTrackingSession(dayKeyStr) {
+  currentDayKey = dayKeyStr;
   activePeriod = true;
   voiceStartTimes.clear();
 
   const guild = client.guilds.cache.get(GUILD_ID);
   if (guild) {
-    // Fetch toàn bộ members để đảm bảo cache đầy đủ
     try {
       await guild.members.fetch();
       debugLog('👥', 'START', `Đã fetch ${guild.members.cache.size} members vào cache`);
     } catch (err) {
-      debugLog('⚠️', 'START', `Fetch members lỗi: ${err.message} — dùng cache hiện có`);
+      debugLog('⚠️', 'START', `Fetch members lỗi: ${err.message}`);
     }
 
     let countInVoice = 0;
@@ -260,15 +266,23 @@ cron.schedule(startCronExpr, async () => {
         debugLog('🎙️', 'START', `Phát hiện ${member.user.username} đang trong voice kênh #${member.voice.channel?.name}`);
       }
     });
-    debugLog('🚀', 'START', `Tracking BẮT ĐẦU | ${VOICE_START_TIME} | Ngày: ${currentDayKey} | ${countInVoice} người đang trong voice`);
+    debugLog('🚀', 'START', `Tracking BẮT ĐẦU | Ca: ${currentDayKey} | ${countInVoice} người đang trong voice`);
   }
+}
+
+// ====================== CRON JOBS ======================
+
+// 1. Bắt đầu tracking
+cron.schedule(startCronExpr, async () => {
+  const localDate = new Date(new Date().toLocaleString('en-US', { timeZone: TIMEZONE }));
+  const dayKeyStr = `${localDate.getFullYear()}-${String(localDate.getMonth() + 1).padStart(2, '0')}-${String(localDate.getDate()).padStart(2, '0')}`;
+  await startTrackingSession(dayKeyStr);
 }, { timezone: TIMEZONE });
 
 // 2. Kết thúc tracking
 cron.schedule(endCronExpr, async () => {
-  debugLog('🏁', 'END', `Tracking KẾT THÚC | ${VOICE_END_TIME} | voiceStartTimes.size=${voiceStartTimes.size}`);
+  debugLog('🏁', 'END', `Tracking KẾT THÚC | ${VOICE_END_TIME}`);
 
-  // BUG FIX #2: Lưu dữ liệu TRƯỚC khi tắt activePeriod
   const guild = client.guilds.cache.get(GUILD_ID);
   if (guild) {
     const promises = [];
@@ -276,7 +290,6 @@ cron.schedule(endCronExpr, async () => {
       const member = guild.members.cache.get(userId);
       if (member?.voice?.channelId) {
         const seconds = Math.floor((Date.now() - startTime.getTime()) / 1000);
-        debugLog('💾', 'END', `Lưu cuối: ${member.user.username} | ${seconds}s`);
         promises.push(addVoiceTime(userId, seconds));
       }
     }
@@ -285,7 +298,7 @@ cron.schedule(endCronExpr, async () => {
 
   activePeriod = false;
   voiceStartTimes.clear();
-  debugLog('✅', 'END', 'activePeriod = false | voiceStartTimes đã clear');
+  debugLog('✅', 'END', 'Đã lưu toàn bộ tiến trình cuối cùng.');
 }, { timezone: TIMEZONE });
 
 // 3. Auto-save mỗi 5 phút
@@ -311,10 +324,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
   const isInVoice  = !!newState.channelId;
   const username   = member.user.username;
 
-  if (!activePeriod) {
-    debugLog('⏸️', 'VOICE', `Ngoài giờ tracking: ${username} | wasInVoice=${wasInVoice} → isInVoice=${isInVoice}`);
-    return;
-  }
+  if (!activePeriod) return;
 
   if (!wasInVoice && isInVoice) {
     // Vào voice
@@ -328,14 +338,8 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
       const seconds = Math.floor((Date.now() - start.getTime()) / 1000);
       await addVoiceTime(member.id, seconds);
       voiceStartTimes.delete(member.id);
-      debugLog('🔴', 'VOICE', `${username} RỜI voice #${oldState.channel?.name} | +${seconds}s (${Math.floor(seconds/60)}p${seconds%60}s)`);
-    } else {
-      debugLog('⚠️', 'VOICE', `${username} rời voice nhưng không có startTime → không lưu`);
+      debugLog('🔴', 'VOICE', `${username} RỜI voice | +${seconds}s (${Math.floor(seconds/60)}p${seconds%60}s)`);
     }
-
-  } else if (wasInVoice && isInVoice) {
-    // Chuyển kênh
-    debugLog('🔀', 'VOICE', `${username} CHUYỂN từ #${oldState.channel?.name} → #${newState.channel?.name} | startTime giữ nguyên`);
   }
 });
 
@@ -343,14 +347,12 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand() || interaction.commandName !== 'check') return;
 
-  debugLog('💬', 'CMD', `/check dùng bởi ${interaction.user.username}`);
-
   try {
     const res = await pool.query('SELECT day_key FROM voice_progress ORDER BY day_key DESC LIMIT 1');
     const dayKey = currentDayKey || (res.rows[0]?.day_key);
 
     if (!dayKey) {
-      return interaction.reply({ content: '📭 Chưa có dữ liệu tiến độ nào trong ngày hôm nay.', ephemeral: true });
+      return interaction.reply({ content: '📭 Chưa có dữ liệu tiến độ nào.', ephemeral: true });
     }
 
     const data = await pool.query(
@@ -368,25 +370,20 @@ client.on('interactionCreate', async interaction => {
       const totalMin = Math.floor(row.total_seconds / 60);
       const hours = Math.floor(totalMin / 60);
       const mins = totalMin % 60;
-      const timeStr = `${hours}h ${mins}m`;
       const status = totalMin >= 150 ? '✅ **Hoàn thành**' : '⏳ Chưa hoàn thành';
 
       let username = row.user_id;
       try {
         const member = await interaction.guild.members.fetch(row.user_id);
         username = member.user.username;
-      } catch {
-        debugLog('⚠️', 'CMD', `Không fetch được username cho userId=${row.user_id}`);
-      }
+      } catch {}
 
-      desc += `**${username}** — ${timeStr} — ${status}\n`;
+      desc += `**${username}** — ${hours}h ${mins}m — ${status}\n`;
     }
 
-    embed.setDescription(desc || 'Chưa có ai tham gia voice trong ngày này.');
+    embed.setDescription(desc || 'Chưa có ai tham gia voice.');
     await interaction.reply({ embeds: [embed] });
-    debugLog('✅', 'CMD', `/check trả về ${data.rows.length} users cho ngày ${dayKey}`);
   } catch (err) {
-    debugLog('❌', 'CMD', `/check lỗi: ${err.message}`);
     await interaction.reply({ content: '❌ Lỗi khi lấy dữ liệu. Vui lòng thử lại.', ephemeral: true });
   }
 });
@@ -396,26 +393,35 @@ client.once('ready', async () => {
   console.log('═'.repeat(60));
   debugLog('✅', 'READY', `Bot online: ${client.user.tag}`);
   debugLog('⚙️', 'READY', `Start=${VOICE_START_TIME} | End=${VOICE_END_TIME} | Reset=${RESET_TIME}`);
-  debugLog('⚙️', 'READY', `Cron Start="${startCronExpr}" | End="${endCronExpr}"`);
-  debugLog('⚙️', 'READY', `Auto-save: mỗi 5 phút (*/5 * * * *)`);
-  if (RESULT_CHANNEL_ID) debugLog('📤', 'READY', `Kết quả gửi vào channel: ${RESULT_CHANNEL_ID}`);
-  debugLog('🔢', 'READY', `activePeriod=${activePeriod} | voiceStartTimes.size=${voiceStartTimes.size}`);
   console.log('═'.repeat(60));
 
   await initDB();
 
-  const commands = [
+  // Khôi phục trạng thái tracking nếu bot lỡ bị restart giữa chừng
+  const { isActive, dayKey } = getTrackingState();
+  if (isActive) {
+    debugLog('🔄', 'RECOVER', `Bot chạy lúc đang trong ca, khôi phục ca: ${dayKey}...`);
+    await startTrackingSession(dayKey);
+  } else {
+    debugLog('⏸️', 'RECOVER', 'Bot chạy ngoài giờ tracking. Chờ đến giờ cron sẽ tự động kích hoạt.');
+  }
+
+  const commands =[
     new SlashCommandBuilder()
       .setName('check')
       .setDescription('Xem bảng top voice của toàn server')
   ];
 
   const rest = new REST({ version: '10' }).setToken(TOKEN);
-  await rest.put(
-    Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-    { body: commands }
-  );
-  debugLog('✅', 'READY', 'Lệnh /check đã đăng ký');
+  try {
+    await rest.put(
+      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+      { body: commands }
+    );
+    debugLog('✅', 'READY', 'Lệnh /check đã đăng ký');
+  } catch (error) {
+    debugLog('❌', 'READY', `Lỗi đăng ký lệnh: ${error.message}`);
+  }
 });
 
 // ====================== XỬ LÝ LỖI TOÀN CỤC ======================
