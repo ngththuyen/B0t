@@ -77,4 +77,3 @@
     "correct": "A",
     "explanation": "Điều kiện để logarit có nghĩa: 2^(3-6x) - 1 > 0\n<=> 2^(3-6x) > 2^0 \n<=> 3 - 6x > 0 \n<=> x < 1/2."
   }
-]
