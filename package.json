@@ -1,0 +1,19 @@
+{
+  "name": "titanbot-voice-tracker",
+  "version": "1.0.0",
+  "description": "Voice time tracker theo yêu cầu",
+  "main": "src/app.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/app.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.15.3",
+    "dotenv": "^17.2.3",
+    "node-cron": "^4.2.1",
+    "pg": "^8.11.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
