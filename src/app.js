@@ -11,10 +11,10 @@ const pool = new Pool({ connectionString: process.env.POSTGRES_URL });
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
-const RESULT_CHANNEL_ID = process.env.RESULT_CHANNEL_ID || null; // Channel nhận bảng kết quả
+const RESULT_CHANNEL_ID = process.env.RESULT_CHANNEL_ID || null;
 const TIMEZONE = 'Asia/Ho_Chi_Minh';
 
-// ==================== THỜI GIAN CẤU HÌNH TỪ ENV ====================
+// ==================== THỜI GIAN CẤU HÌNH ====================
 const VOICE_START_TIME = process.env.VOICE_START_TIME || '20:00';
 const VOICE_END_TIME   = process.env.VOICE_END_TIME   || '01:30';
 const RESET_TIME       = process.env.RESET_TIME       || VOICE_END_TIME;
@@ -24,7 +24,6 @@ if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
   process.exit(1);
 }
 
-// Parse HH:MM thành cron expression
 function parseTimeToCron(timeStr) {
   const match = timeStr.match(/^(\d{1,2}):(\d{2})$/);
   if (!match) {
@@ -79,7 +78,33 @@ async function addVoiceTime(userId, seconds) {
   `, [currentDayKey, userId, seconds]);
 }
 
-// ====================== HÀM TẠO BẢNG KẾT QUẢ ======================
+// ====================== AUTO-SAVE MỖI 5 PHÚT ======================
+async function autoSaveVoiceTime() {
+  if (!activePeriod || voiceStartTimes.size === 0) return;
+
+  const guild = client.guilds.cache.get(GUILD_ID);
+  if (!guild) return;
+
+  let savedCount = 0;
+  for (const [userId, startTime] of voiceStartTimes.entries()) {
+    const member = guild.members.cache.get(userId);
+    if (member && member.voice?.channel) {
+      const seconds = Math.floor((Date.now() - startTime.getTime()) / 1000);
+      if (seconds > 0) {
+        await addVoiceTime(userId, seconds);
+        voiceStartTimes.set(userId, new Date()); // reset start time
+        savedCount++;
+      }
+    } else {
+      voiceStartTimes.delete(userId);
+    }
+  }
+  if (savedCount > 0) {
+    console.log(`💾 Auto-save mỗi 5 phút: Đã lưu ${savedCount} user`);
+  }
+}
+
+// ====================== HÀM GỬI BẢNG KẾT QUẢ ======================
 async function sendResultEmbed() {
   if (!currentDayKey || !RESULT_CHANNEL_ID) return;
 
@@ -118,7 +143,7 @@ async function sendResultEmbed() {
 
   embed.setDescription(desc || 'Chưa có ai tham gia voice trong ngày này.');
   await channel.send({ embeds: [embed] });
-  console.log(`📤 Đã gửi bảng kết quả ngày ${currentDayKey} vào channel ${RESULT_CHANNEL_ID}`);
+  console.log(`📤 Đã gửi bảng kết quả ngày ${currentDayKey}`);
 }
 
 // ====================== CRON JOBS ======================
@@ -128,7 +153,7 @@ const getDayKey = () => {
   return `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, '0')}-${String(local.getDate()).padStart(2, '0')}`;
 };
 
-// 1. BẮT ĐẦU
+// 1. Bắt đầu tracking
 cron.schedule(startCronExpr, async () => {
   currentDayKey = getDayKey();
   activePeriod = true;
@@ -140,11 +165,10 @@ cron.schedule(startCronExpr, async () => {
       if (member.voice?.channel) voiceStartTimes.set(member.id, new Date());
     });
   }
-
-  console.log(`🚀 Tracking voice BẮT ĐẦU lúc ${VOICE_START_TIME} - Ngày: ${currentDayKey}`);
+  console.log(`🚀 Tracking voice BẮT ĐẦU - ${VOICE_START_TIME} - Ngày: ${currentDayKey}`);
 }, { timezone: TIMEZONE });
 
-// 2. KẾT THÚC tracking
+// 2. Kết thúc tracking
 cron.schedule(endCronExpr, async () => {
   if (!activePeriod) return;
   activePeriod = false;
@@ -159,15 +183,19 @@ cron.schedule(endCronExpr, async () => {
       }
     });
   }
-
-  console.log(`🏁 Tracking voice KẾT THÚC lúc ${VOICE_END_TIME} - Ngày ${currentDayKey}`);
+  console.log(`🏁 Tracking voice KẾT THÚC - ${VOICE_END_TIME}`);
 }, { timezone: TIMEZONE });
 
-// 3. RESET + GỬI BẢNG KẾT QUẢ
+// 3. Auto-save mỗi 5 phút
+cron.schedule('*/5 * * * *', async () => {
+  await autoSaveVoiceTime();
+}, { timezone: TIMEZONE });
+
+// 4. Reset + gửi bảng kết quả
 cron.schedule(resetCronExpr, async () => {
-  await sendResultEmbed();        // ← Gửi bảng kết quả trước khi reset
+  await sendResultEmbed();
   voiceStartTimes.clear();
-  console.log(`🔄 RESET hoàn tất lúc ${RESET_TIME} cho chu kỳ mới`);
+  console.log(`🔄 RESET hoàn tất lúc ${RESET_TIME}`);
 }, { timezone: TIMEZONE });
 
 // ====================== VOICE TRACKING ======================
@@ -190,7 +218,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
   }
 });
 
-// ====================== COMMAND /check ======================
+// ====================== COMMAND /check (TOP TOÀN SERVER) ======================
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand() || interaction.commandName !== 'check') return;
 
@@ -198,7 +226,7 @@ client.on('interactionCreate', async interaction => {
   const dayKey = currentDayKey || (res.rows[0]?.day_key);
 
   if (!dayKey) {
-    return interaction.reply({ content: '📭 Chưa có dữ liệu tiến độ nào.', ephemeral: true });
+    return interaction.reply({ content: '📭 Chưa có dữ liệu tiến độ nào trong ngày hôm nay.', ephemeral: true });
   }
 
   const data = await pool.query(
@@ -207,7 +235,7 @@ client.on('interactionCreate', async interaction => {
   );
 
   const embed = new EmbedBuilder()
-    .setTitle(`📊 Bảng tiến độ voice - ${dayKey}`)
+    .setTitle(`📊 BẢNG TOP VOICE - ${dayKey}`)
     .setColor(0x00ff88)
     .setTimestamp();
 
@@ -235,15 +263,15 @@ client.on('interactionCreate', async interaction => {
 // ====================== READY ======================
 client.once('ready', async () => {
   console.log(`✅ Bot đã online - ${client.user.tag}`);
-  console.log(`⏰ Cấu hình: Start=${VOICE_START_TIME} | End=${VOICE_END_TIME} | Reset=${RESET_TIME}`);
-  if (RESULT_CHANNEL_ID) console.log(`📤 Kết quả sẽ được gửi vào channel ID: ${RESULT_CHANNEL_ID}`);
+  console.log(`⏰ Cấu hình: Start=${VOICE_START_TIME} | End=${VOICE_END_TIME} | Reset=${RESET_TIME} | Auto-save: 5 phút`);
+  if (RESULT_CHANNEL_ID) console.log(`📤 Kết quả sẽ gửi vào channel: ${RESULT_CHANNEL_ID}`);
   
   await initDB();
 
   const commands = [
     new SlashCommandBuilder()
       .setName('check')
-      .setDescription('Kiểm tra bảng tiến độ voice hàng ngày')
+      .setDescription('Xem bảng top voice của toàn server')
   ];
 
   const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -252,7 +280,7 @@ client.once('ready', async () => {
     { body: commands }
   );
 
-  console.log('✅ Slash command /check đã đăng ký');
+  console.log('✅ Lệnh /check đã đăng ký');
 });
 
 client.login(TOKEN);
