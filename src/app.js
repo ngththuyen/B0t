@@ -78,29 +78,39 @@ async function addVoiceTime(userId, seconds) {
   `, [currentDayKey, userId, seconds]);
 }
 
-// ====================== AUTO-SAVE MỖI 5 PHÚT ======================
+// ====================== AUTO-SAVE MỖI 5 PHÚT + IN CONSOLE ======================
 async function autoSaveVoiceTime() {
   if (!activePeriod || voiceStartTimes.size === 0) return;
 
   const guild = client.guilds.cache.get(GUILD_ID);
   if (!guild) return;
 
-  let savedCount = 0;
+  const updates = [];
+
   for (const [userId, startTime] of voiceStartTimes.entries()) {
     const member = guild.members.cache.get(userId);
     if (member && member.voice?.channel) {
       const seconds = Math.floor((Date.now() - startTime.getTime()) / 1000);
-      if (seconds > 0) {
+      if (seconds >= 60) {  // chỉ lưu nếu >= 1 phút
         await addVoiceTime(userId, seconds);
-        voiceStartTimes.set(userId, new Date()); // reset start time
-        savedCount++;
+        
+        const minutes = Math.floor(seconds / 60);
+        let username = member.user.username;
+        
+        updates.push(`${username} (+${minutes} phút)`);
+        
+        // Reset thời gian bắt đầu sau khi đã lưu
+        voiceStartTimes.set(userId, new Date());
       }
     } else {
       voiceStartTimes.delete(userId);
     }
   }
-  if (savedCount > 0) {
-    console.log(`💾 Auto-save mỗi 5 phút: Đã lưu ${savedCount} user`);
+
+  if (updates.length > 0) {
+    console.log(`💾 [Auto-save 5 phút] Đã cộng thời gian cho: ${updates.join(' | ')}`);
+  } else {
+    console.log(`💾 [Auto-save 5 phút] Không có user nào được cộng thời gian`);
   }
 }
 
@@ -186,7 +196,7 @@ cron.schedule(endCronExpr, async () => {
   console.log(`🏁 Tracking voice KẾT THÚC - ${VOICE_END_TIME}`);
 }, { timezone: TIMEZONE });
 
-// 3. Auto-save mỗi 5 phút
+// 3. Auto-save mỗi 5 phút + in console
 cron.schedule('*/5 * * * *', async () => {
   await autoSaveVoiceTime();
 }, { timezone: TIMEZONE });
@@ -218,7 +228,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
   }
 });
 
-// ====================== COMMAND /check (TOP TOÀN SERVER) ======================
+// ====================== COMMAND /check ======================
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand() || interaction.commandName !== 'check') return;
 
@@ -263,7 +273,7 @@ client.on('interactionCreate', async interaction => {
 // ====================== READY ======================
 client.once('ready', async () => {
   console.log(`✅ Bot đã online - ${client.user.tag}`);
-  console.log(`⏰ Cấu hình: Start=${VOICE_START_TIME} | End=${VOICE_END_TIME} | Reset=${RESET_TIME} | Auto-save: 5 phút`);
+  console.log(`⏰ Cấu hình: Start=${VOICE_START_TIME} | End=${VOICE_END_TIME} | Reset=${RESET_TIME} | Auto-save: mỗi 5 phút`);
   if (RESULT_CHANNEL_ID) console.log(`📤 Kết quả sẽ gửi vào channel: ${RESULT_CHANNEL_ID}`);
   
   await initDB();
