@@ -319,10 +319,10 @@ function parseTimeToCron(timeStr) {
 
 // ====================== PROGRESS BAR HELPER ======================
 function createProgressBar(current, max, length = 15) {
-  const filled = Math.round((current / max) * length);
+  const filled = Math.max(0, Math.min(length, Math.round((current / max) * length)));
   const empty = length - filled;
   const bar = '█'.repeat(filled) + '░'.repeat(empty);
-  const percent = Math.round((current / max) * 100);
+  const percent = Math.min(100, Math.round((current / max) * 100));
   return `${bar} ${percent}%`;
 }
 
