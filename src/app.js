@@ -39,6 +39,19 @@ const COLORS = {
   ORANGE:     0xf47fff,  // Cam - countdown
 };
 
+// ==================== STREAK CONFIG ====================
+const STREAK_CONFIG = {
+  TARGET_MINUTES: 150,        // 2h30m = target mỗi ngày
+  TARGET_SECONDS: 150 * 60,   // 9000 giây
+  RANKS: [
+    { days: 7,  name: '🔥 Siêng Năng',    color: COLORS.WARNING },
+    { days: 14, name: '⚡ Bền Bỉ',        color: COLORS.ORANGE },
+    { days: 30, name: '⭐ Kiên Trì',       color: COLORS.GOLD },
+    { days: 60, name: '👑 Bất Khả Chiến Bại', color: COLORS.PRIMARY },
+    { days: 100,name: '🏆 Huyền Thoại',   color: 0xff0000 },
+  ]
+};
+
 // ==================== DATA CỐ ĐỊNH ====================
 const EXAMS = [
   { name: 'Kỳ thi Đánh giá Năng Lực (VACT) - Đợt 2', date: new Date('2026-05-24T08:30:00+07:00') },
@@ -336,6 +349,7 @@ function getRankColor(index) {
 
 // ====================== DATABASE ======================
 async function initDB() {
+  // Bảng voice_progress (giữ nguyên)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS voice_progress (
       day_key       TEXT    NOT NULL,
@@ -345,6 +359,7 @@ async function initDB() {
     );
   `);
 
+  // Bảng quiz_questions (giữ nguyên)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS quiz_questions (
       id        TEXT PRIMARY KEY,
@@ -354,6 +369,17 @@ async function initDB() {
       correct   TEXT NOT NULL,
       image_url TEXT,
       sent_at   TIMESTAMPTZ DEFAULT NULL
+    );
+  `);
+
+  // ===== NEW: Bảng streaks =====
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_streaks (
+      user_id          TEXT PRIMARY KEY,
+      current_streak   INTEGER DEFAULT 0,
+      longest_streak   INTEGER DEFAULT 0,
+      last_active_date DATE,        -- ngày cuối cùng đạt target (YYYY-MM-DD)
+      total_days_met   INTEGER DEFAULT 0
     );
   `);
 
@@ -396,6 +422,82 @@ async function buildLeaderboardEmbed(dayKey) {
     });
     return embed;
   }
+
+  // Fetch usernames + streaks
+  const userIds = data.rows.map(r => r.user_id);
+  const streakMap = await getStreaksForUsers(userIds);
+
+  await Promise.all(data.rows.map(async (row) => {
+    try {
+      const user = await client.users.fetch(row.user_id);
+      row.username = user.username;
+      row.avatar = user.displayAvatarURL({ size: 64 });
+    } catch {
+      row.username = `User#${row.user_id.slice(-4)}`;
+      row.avatar = null;
+    }
+    // Gắn streak data
+    row.streak = streakMap[row.user_id] || { current_streak: 0, longest_streak: 0 };
+  }));
+
+  // Calculate stats
+  const totalParticipants = data.rows.length;
+  const totalTime = data.rows.reduce((sum, r) => sum + r.total_seconds, 0);
+  const achievedCount = data.rows.filter(r => r.total_seconds >= STREAK_CONFIG.TARGET_SECONDS).length;
+
+  // Header stats
+  embed.addFields(
+    { name: '👥 Thành viên', value: `\`${totalParticipants}\` người`, inline: true },
+    { name: '⏱️ Tổng thời gian', value: `\`${formatDuration(totalTime)}\``, inline: true },
+    { name: '✅ Đạt target', value: `\`${achievedCount}/${totalParticipants}\``, inline: true }
+  );
+
+  // Divider
+  embed.addFields({ name: '\u200b', value: '**🏆 BẢNG XẾP HẠNG**' });
+
+  // Top 3 get special treatment
+  data.rows.slice(0, 3).forEach((row, index) => {
+    const hours = Math.floor(row.total_seconds / 3600);
+    const mins = Math.floor((row.total_seconds % 3600) / 60);
+    const isAchieved = row.total_seconds >= STREAK_CONFIG.TARGET_SECONDS;
+    const progressBar = createProgressBar(row.total_seconds, STREAK_CONFIG.TARGET_SECONDS, 10);
+    const status = isAchieved ? '✅ Đạt' : '❌ Chưa đạt';
+    const streakStr = formatStreak(row.streak.current_streak);
+    const rank = getStreakRank(row.streak.current_streak);
+
+    embed.addFields({
+      name: `${getRankEmoji(index)} ${row.username} ${streakStr}`,
+      value:
+        `\`\`\`yaml\n` +
+        `Thời gian: ${hours}h ${String(mins).padStart(2, '0')}m\n` +
+        `Tiến độ:  ${progressBar}\n` +
+        `Streak:   ${row.streak.current_streak} ngày (cao nhất: ${row.streak.longest_streak})\n` +
+        `Trạng thái: ${status}\n` +
+        `\`\`\``,
+      inline: false
+    });
+  });
+
+  // Others (if any)
+  if (data.rows.length > 3) {
+    const others = data.rows.slice(3);
+    let othersText = '';
+    others.forEach((row, idx) => {
+      const dur = formatDuration(row.total_seconds);
+      const status = row.total_seconds >= STREAK_CONFIG.TARGET_SECONDS ? '✅' : '❌';
+      const streakStr = row.streak.current_streak > 0 ? `🔥${row.streak.current_streak}` : '';
+      othersText += `${getRankEmoji(idx + 3)} **${row.username}** ${streakStr} — \`${dur}\` ${status}\n`;
+    });
+    embed.addFields({
+      name: '📋 Các vị trí còn lại',
+      value: othersText || '\u200b',
+      inline: false
+    });
+  }
+
+  embed.setFooter({ text: `🎯 Mục tiêu: ${STREAK_CONFIG.TARGET_MINUTES} phút mỗi ca | 🔥 Streak = đạt target liên tiếp` });
+  return embed;
+}
 
   // Fetch usernames
   await Promise.all(data.rows.map(async (row) => {
@@ -647,14 +749,26 @@ cron.schedule(parseTimeToCron(VOICE_START_TIME), async () => {
   await startTrackingSession(dayKey);
 }, { timezone: TIMEZONE });
 
-// 2. Kết thúc ca học
+// 2. Kết thúc ca học — chốt sổ + cập nhật streak
 cron.schedule(parseTimeToCron(VOICE_END_TIME), async () => {
   const promises = [];
+  const userIds = new Set();
+
   for (const [userId, startTime] of voiceStartTimes.entries()) {
     const seconds = Math.floor((Date.now() - startTime.getTime()) / 1000);
     promises.push(addVoiceTime(userId, seconds));
+    userIds.add(userId);
   }
   await Promise.all(promises);
+
+  // ===== NEW: Cập nhật streak cho tất cả user đã học =====
+  if (currentDayKey) {
+    for (const userId of userIds) {
+      await updateUserStreak(userId, currentDayKey);
+    }
+    debugLog('STREAK', `Đã cập nhật streak cho ${userIds.size} users.`);
+  }
+
   activePeriod = false;
   voiceStartTimes.clear();
   debugLog('TRACKING', 'Đã kết thúc ca học và chốt sổ dữ liệu.');
@@ -703,7 +817,7 @@ cron.schedule('0 0 * * *', async () => {
 }, { timezone: TIMEZONE });
 
 // 6. Daily Quiz — gửi 5 lần/ngày
-cron.schedule('0 6,10,14,18,21 * * *', async () => {
+cron.schedule('0 7,10,14,18,21,22,23 * * *', async () => {
   debugLog('CRON', 'Tới giờ gửi Daily Quiz!');
   await sendDailyQuiz();
 }, { timezone: TIMEZONE });
@@ -764,6 +878,87 @@ client.on('interactionCreate', async interaction => {
       });
 
     return interaction.reply({ embeds: [replyEmbed], ephemeral: true });
+  }
+
+  // ── Xem streak cá nhân ──
+  if (interaction.commandName === 'streak') {
+    try {
+      const targetUser = interaction.options.getUser('user') || interaction.user;
+      const res = await pool.query(
+        'SELECT * FROM user_streaks WHERE user_id = $1',
+        [targetUser.id]
+      );
+      const streak = res.rows[0];
+
+      if (!streak || streak.current_streak === 0) {
+        const emptyEmbed = new EmbedBuilder()
+          .setColor(COLORS.INFO)
+          .setTitle('🔥 Streak của bạn')
+          .setDescription(
+            targetUser.id === interaction.user.id
+              ? 'Bạn chưa có streak nào.\n\n💡 Hãy đạt target 2h30m trong ca học để bắt đầu streak!'
+              : `${targetUser.username} chưa có streak nào.`
+          );
+        return interaction.reply({ embeds: [emptyEmbed] });
+      }
+
+      const rank = getStreakRank(streak.current_streak);
+      const nextRank = STREAK_CONFIG.RANKS.find(r => r.days > streak.current_streak);
+      const progressToNext = nextRank 
+        ? createProgressBar(streak.current_streak, nextRank.days, 12)
+        : '👑 Đã đạt rank cao nhất!';
+
+      const embed = new EmbedBuilder()
+        .setColor(rank?.color || COLORS.PRIMARY)
+        .setTitle(`🔥 Streak của ${targetUser.username}`)
+        .setThumbnail(targetUser.displayAvatarURL({ size: 128 }))
+        .addFields(
+          { 
+            name: '🔥 Streak hiện tại', 
+            value: `**${streak.current_streak}** ngày`,
+            inline: true 
+          },
+          { 
+            name: '🏆 Cao nhất', 
+            value: `**${streak.longest_streak}** ngày`,
+            inline: true 
+          },
+          { 
+            name: '📅 Tổng ngày đạt', 
+            value: `**${streak.total_days_met}** ngày`,
+            inline: true 
+          }
+        );
+
+      if (rank) {
+        embed.addFields({
+          name: '🎖️ Rank hiện tại',
+          value: `**${rank.name}**`,
+          inline: false
+        });
+      }
+
+      if (nextRank) {
+        embed.addFields({
+          name: `📈 Tiến độ đến ${nextRank.name}`,
+          value: `\`${progressToNext}\` (${streak.current_streak}/${nextRank.days} ngày)`,
+          inline: false
+        });
+      }
+
+      embed.setFooter({ text: `Ngày hoạt động gần nhất: ${streak.last_active_date}` })
+           .setTimestamp();
+
+      await interaction.reply({ embeds: [embed] });
+
+    } catch (err) {
+      debugLog('CMD_ERR', `Lỗi /streak: ${err.message}`);
+      const errEmbed = new EmbedBuilder()
+        .setColor(COLORS.DANGER)
+        .setTitle('❌ Lỗi hệ thống')
+        .setDescription('Không thể lấy thông tin streak.');
+      await interaction.reply({ embeds: [errEmbed], ephemeral: true });
+    }
   }
 
   // ── Slash Commands ──
@@ -909,6 +1104,122 @@ client.on('interactionCreate', async interaction => {
   }
 });
 
+// ====================== STREAK HELPERS ======================
+
+/**
+ * Kiểm tra xem 2 ngày có liên tiếp không
+ */
+function isConsecutive(date1, date2) {
+  const d1 = new Date(date1 + 'T00:00:00');
+  const d2 = new Date(date2 + 'T00:00:00');
+  const diffTime = d2 - d1;
+  const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+  return diffDays === 1;
+}
+
+/**
+ * Lấy rank streak hiện tại của user
+ */
+function getStreakRank(streakDays) {
+  let currentRank = null;
+  for (const rank of STREAK_CONFIG.RANKS) {
+    if (streakDays >= rank.days) currentRank = rank;
+  }
+  return currentRank;
+}
+
+/**
+ * Format streak với emoji fire tương ứng độ dài
+ */
+function formatStreak(days) {
+  if (days >= 100) return `🔥🔥🔥🔥🔥 x${days}`;
+  if (days >= 30)  return `🔥🔥🔥🔥 x${days}`;
+  if (days >= 14)  return `🔥🔥🔥 x${days}`;
+  if (days >= 7)   return `🔥🔥 x${days}`;
+  if (days > 0)    return `🔥 x${days}`;
+  return '❌';
+}
+
+/**
+ * Cập nhật streak cho user sau khi kết thúc ca học
+ */
+async function updateUserStreak(userId, dayKey) {
+  try {
+    // Lấy tổng thời gian học của ngày này
+    const res = await pool.query(
+      'SELECT total_seconds FROM voice_progress WHERE day_key = $1 AND user_id = $2',
+      [dayKey, userId]
+    );
+
+    if (res.rows.length === 0) return; // Không học gì cả
+
+    const totalSeconds = res.rows[0].total_seconds;
+    if (totalSeconds < STREAK_CONFIG.TARGET_SECONDS) return; // Chưa đạt target
+
+    // Lấy streak hiện tại
+    const streakRes = await pool.query(
+      'SELECT * FROM user_streaks WHERE user_id = $1',
+      [userId]
+    );
+    const streak = streakRes.rows[0];
+
+    let newStreak = 1;
+    let newLongest = 1;
+    let newTotalDays = 1;
+
+    if (streak) {
+      const lastDate = streak.last_active_date;
+      newTotalDays = streak.total_days_met + 1;
+
+      if (lastDate === dayKey) {
+        // Đã cập nhật rồi (tránh double count nếu chạy lại)
+        return;
+      } else if (isConsecutive(lastDate, dayKey)) {
+        // Ngày liên tiếp → streak + 1
+        newStreak = streak.current_streak + 1;
+      } else {
+        // Mất streak → reset về 1
+        newStreak = 1;
+      }
+      newLongest = Math.max(streak.longest_streak, newStreak);
+    }
+
+    await pool.query(`
+      INSERT INTO user_streaks (user_id, current_streak, longest_streak, last_active_date, total_days_met)
+      VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (user_id)
+      DO UPDATE SET 
+        current_streak = EXCLUDED.current_streak,
+        longest_streak = EXCLUDED.longest_streak,
+        last_active_date = EXCLUDED.last_active_date,
+        total_days_met = EXCLUDED.total_days_met
+    `, [userId, newStreak, newLongest, dayKey, newTotalDays]);
+
+    debugLog('STREAK', `User ${userId}: streak=${newStreak}, longest=${newLongest}`);
+
+  } catch (err) {
+    debugLog('STREAK_ERR', `Lỗi cập nhật streak user ${userId}: ${err.message}`);
+  }
+}
+
+/**
+ * Lấy streak info của nhiều users
+ */
+async function getStreaksForUsers(userIds) {
+  if (userIds.length === 0) return {};
+  
+  const res = await pool.query(
+    'SELECT * FROM user_streaks WHERE user_id = ANY($1)',
+    [userIds]
+  );
+  
+  const map = {};
+  for (const row of res.rows) {
+    map[row.user_id] = row;
+  }
+  return map;
+}
+
 // ====================== KHỞI ĐỘNG ======================
 client.once('ready', async () => {
   console.log('='.repeat(50));
@@ -920,6 +1231,15 @@ client.once('ready', async () => {
     new SlashCommandBuilder()
       .setName('check')
       .setDescription('Xem thống kê thời gian học của ca hiện tại'),
+
+    new SlashCommandBuilder()
+      .setName('streak')
+      .setDescription('Xem streak học tập của bạn hoặc người khác')
+      .addUserOption(opt =>
+        opt.setName('user')
+          .setDescription('Người dùng cần xem streak (để trống = bản thân)')
+          .setRequired(false)
+      ),
 
     new SlashCommandBuilder()
       .setName('debug')
