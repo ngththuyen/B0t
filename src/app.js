@@ -365,119 +365,6 @@ function formatStreakEmoji(streak) {
   return '❌';
 }
 
-async function sendQuizTopPage(interaction, page, isWeekly, isInitial = false) {
-  const perPage = 3;
-  
-  // Đếm tổng số người chơi
-  let countRes;
-  if (isWeekly) {
-    const now = new Date();
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - now.getDay() + 1);
-    monday.setHours(0, 0, 0, 0);
-    countRes = await pool.query(`
-      SELECT COUNT(DISTINCT user_id) as count
-      FROM quiz_attempts
-      WHERE answered_at >= $1
-    `, [monday.toISOString()]);
-  } else {
-    countRes = await pool.query('SELECT COUNT(*) as count FROM quiz_scores WHERE total_answered > 0');
-  }
-  
-  const total = parseInt(countRes.rows[0].count);
-  const totalPages = Math.max(1, Math.ceil(total / perPage));
-  const safePage = Math.min(Math.max(1, page), totalPages);
-  const offset = (safePage - 1) * perPage;
-
-  let query;
-  if (isWeekly) {
-    const now = new Date();
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - now.getDay() + 1);
-    monday.setHours(0, 0, 0, 0);
-    query = `
-      SELECT 
-        qa.user_id,
-        SUM(qa.points) as weekly_points,
-        COUNT(*) FILTER (WHERE qa.is_correct) as correct,
-        COUNT(*) as total
-      FROM quiz_attempts qa
-      WHERE qa.answered_at >= '${monday.toISOString()}'
-      GROUP BY qa.user_id
-      ORDER BY weekly_points DESC
-      LIMIT ${perPage} OFFSET ${offset}
-    `;
-  } else {
-    query = `
-      SELECT * FROM quiz_scores
-      WHERE total_answered > 0
-      ORDER BY total_points DESC
-      LIMIT ${perPage} OFFSET ${offset}
-    `;
-  }
-
-  const res = await pool.query(query);
-  
-  const embed = new EmbedBuilder()
-    .setColor(COLORS.GOLD)
-    .setTitle(isWeekly ? '📅 BXH Quiz Tuần Này' : '🏆 BXH Quiz Tổng Điểm')
-    .setDescription(`Trang **${safePage}/${totalPages}** | Tổng **${total}** người chơi`)
-    .setTimestamp();
-
-  if (res.rows.length === 0) {
-    embed.addFields({ name: 'ℹ️ Chưa có dữ liệu', value: 'Chưa ai tham gia!' });
-  } else {
-    await Promise.all(res.rows.map(async (row) => {
-      try {
-        const user = await client.users.fetch(row.user_id);
-        row.username = user.username;
-      } catch {
-        row.username = `User#${row.user_id.slice(-4)}`;
-      }
-    }));
-
-    res.rows.forEach((row, idx) => {
-      const globalRank = offset + idx + 1;
-      const rank = getRankEmoji(globalRank - 1);
-      const rankInfo = getQuizRankInfo(row.total_points || row.weekly_points || 0);
-      const accuracy = row.total_answered > 0 
-        ? Math.round((row.correct_count / row.total_answered) * 100) 
-        : (row.total > 0 ? Math.round((row.correct / row.total) * 100) : 0);
-
-      embed.addFields({
-        name: `${rank} ${row.username}`,
-        value: 
-          `\`\`\`yaml\n` +
-          `Điểm:   ${row.total_points || row.weekly_points || 0}\n` +
-          `Rank:   ${rankInfo.current.name}\n` +
-          `Đúng:   ${row.correct_count || row.correct || 0}/${row.total_answered || row.total || 0} (${accuracy}%)\n` +
-          `Streak: ${formatStreakEmoji(row.longest_quiz_streak || 0)} ${row.longest_quiz_streak || 0}\n` +
-          `\`\`\``,
-        inline: false
-      });
-    });
-  }
-
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`quiztop_prev_${safePage}_${isWeekly}`)
-      .setLabel('◀ Trước')
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(safePage <= 1),
-    new ButtonBuilder()
-      .setCustomId(`quiztop_next_${safePage}_${isWeekly}`)
-      .setLabel('Sau ▶')
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(safePage >= totalPages)
-  );
-
-  if (isInitial) {
-    await interaction.reply({ embeds: [embed], components: [row] });
-  } else {
-    await interaction.update({ embeds: [embed], components: [row] });
-  }
-}
-
 // ====================== DATABASE ======================
 async function initDB() {
   await pool.query(`
@@ -1128,23 +1015,59 @@ client.on('interactionCreate', async interaction => {
     }
   }
 
-  // ── Xử lý nút bấm quiztop pagination ──
-  if (interaction.isButton() && interaction.customId.startsWith('quiztop_')) {
-    const parts = interaction.customId.split('_');
-    const direction = parts[1]; // prev hoặc next
-    const currentPage = parseInt(parts[2]);
-    const isWeekly = parts[3] === 'true';
-    
-    const newPage = direction === 'next' ? currentPage + 1 : currentPage - 1;
-    await sendQuizTopPage(interaction, newPage, isWeekly, false);
-    return;
-  }
-
-  // ── /quiztop — Bảng xếp hạng điểm quiz ──
+  // ── /quiztop — Bảng xếp hạng điểm quiz (liệt kê tất cả) ──
   if (interaction.commandName === 'quiztop') {
     try {
-      const isWeekly = interaction.options.getBoolean('weekly') || false;
-      await sendQuizTopPage(interaction, 1, isWeekly, true);
+      const res = await pool.query(`
+        SELECT * FROM quiz_scores
+        WHERE total_answered > 0
+        ORDER BY total_points DESC
+      `);
+
+      if (res.rows.length === 0) {
+        const emptyEmbed = new EmbedBuilder()
+          .setColor(COLORS.INFO)
+          .setTitle('📊 Bảng Xếp Hạng Quiz')
+          .setDescription('Chưa có ai tham gia Quiz! Hãy là người đầu tiên!');
+        return interaction.reply({ embeds: [emptyEmbed] });
+      }
+
+      const embed = new EmbedBuilder()
+        .setColor(COLORS.GOLD)
+        .setTitle('🏆 BẢNG XẾP HẠNG QUIZ')
+        .setDescription(`Tổng **${res.rows.length}** người chơi`)
+        .setTimestamp();
+
+      await Promise.all(res.rows.map(async (row) => {
+        try {
+          const user = await client.users.fetch(row.user_id);
+          row.username = user.username;
+        } catch {
+          row.username = `User#${row.user_id.slice(-4)}`;
+        }
+      }));
+
+      res.rows.forEach((row, idx) => {
+        const rank = getRankEmoji(idx);
+        const rankInfo = getQuizRankInfo(row.total_points);
+        const accuracy = row.total_answered > 0 
+          ? Math.round((row.correct_count / row.total_answered) * 100) 
+          : 0;
+
+        embed.addFields({
+          name: `${rank} ${row.username}`,
+          value: 
+            `\`\`\`yaml\n` +
+            `Điểm:   ${row.total_points}\n` +
+            `Rank:   ${rankInfo.current.name}\n` +
+            `Đúng:   ${row.correct_count}/${row.total_answered} (${accuracy}%)\n` +
+            `Streak: ${formatStreakEmoji(row.longest_quiz_streak)} ${row.longest_quiz_streak}\n` +
+            `\`\`\``,
+          inline: false
+        });
+      });
+
+      await interaction.reply({ embeds: [embed] });
     } catch (err) {
       debugLog('CMD_ERR', `Lỗi /quiztop: ${err.message}`);
       const errEmbed = new EmbedBuilder()
@@ -1429,19 +1352,7 @@ client.once('ready', async () => {
 
     new SlashCommandBuilder()
       .setName('quiztop')
-      .setDescription('Xem bảng xếp hạng điểm Quiz')
-      .addIntegerOption(opt =>
-        opt.setName('limit')
-          .setDescription('Số người hiển thị (mặc định 10)')
-          .setRequired(false)
-          .setMinValue(3)
-          .setMaxValue(25)
-      )
-      .addBooleanOption(opt =>
-        opt.setName('weekly')
-          .setDescription('BXH tuần này (mặc định: tổng điểm)')
-          .setRequired(false)
-      ),
+      .setDescription('Xem bảng xếp hạng điểm Quiz'),
 
     new SlashCommandBuilder()
       .setName('quizprofile')
