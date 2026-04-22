@@ -25,14 +25,26 @@ if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
   process.exit(1);
 }
 
+// ==================== PALETTE MÀU CHUẨN ====================
+const COLORS = {
+  PRIMARY:    0x5865f2,  // Discord Blurple
+  SUCCESS:    0x57f287,  // Xanh lá - thành công/đạt
+  WARNING:    0xfee75c,  // Vàng - cảnh báo/chưa đạt
+  DANGER:     0xed4245,  // Đỏ - lỗi/sai
+  INFO:       0x3ba55d,  // Xanh ngọc - thông tin
+  DARK:       0x2b2d31,  // Nền tối
+  GOLD:       0xffd700,  // Vàng gold - top 1
+  SILVER:     0xc0c0c0,  // Bạc - top 2
+  BRONZE:     0xcd7f32,  // Đồng - top 3
+  ORANGE:     0xf47fff,  // Cam - countdown
+};
+
 // ==================== DATA CỐ ĐỊNH ====================
-// Danh sách các kỳ thi quan trọng (chỉnh sửa tại đây)
 const EXAMS = [
   { name: 'Kỳ thi Đánh giá Năng Lực (VACT) - Đợt 2', date: new Date('2026-05-24T08:30:00+07:00') },
   { name: 'Kỳ thi Tốt nghiệp THPT Quốc Gia 2026',    date: new Date('2026-06-11T07:30:00+07:00') }
 ];
 
-// Mỗi tip gồm: en (câu tiếng Anh), vi (dịch nghĩa), tag (loại cấu trúc), note (giải thích ngắn)
 const ENGLISH_TIPS = [
   // ── PHRASAL VERBS ──
   {
@@ -292,9 +304,38 @@ function parseTimeToCron(timeStr) {
   return `${m} ${h} * * *`;
 }
 
+// ====================== PROGRESS BAR HELPER ======================
+function createProgressBar(current, max, length = 15) {
+  const filled = Math.round((current / max) * length);
+  const empty = length - filled;
+  const bar = '█'.repeat(filled) + '░'.repeat(empty);
+  const percent = Math.round((current / max) * 100);
+  return `${bar} ${percent}%`;
+}
+
+function formatDuration(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function getRankEmoji(index) {
+  if (index === 0) return '🥇';
+  if (index === 1) return '🥈';
+  if (index === 2) return '🥉';
+  return `\`${String(index + 1).padStart(2, '0')}.\``;
+}
+
+function getRankColor(index) {
+  if (index === 0) return COLORS.GOLD;
+  if (index === 1) return COLORS.SILVER;
+  if (index === 2) return COLORS.BRONZE;
+  return COLORS.PRIMARY;
+}
+
 // ====================== DATABASE ======================
 async function initDB() {
-  // Bảng theo dõi thời gian voice
   await pool.query(`
     CREATE TABLE IF NOT EXISTS voice_progress (
       day_key       TEXT    NOT NULL,
@@ -304,8 +345,6 @@ async function initDB() {
     );
   `);
 
-  // Bảng ngân hàng câu hỏi quiz
-  // sent_at: NULL = chưa dùng, có giá trị = đã gửi (để tra cứu khi nhấn nút)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS quiz_questions (
       id        TEXT PRIMARY KEY,
@@ -336,47 +375,104 @@ async function addVoiceTime(userId, seconds) {
   }
 }
 
+// ====================== LEADERBOARD EMBEDS ======================
 async function buildLeaderboardEmbed(dayKey) {
   const data = await pool.query(
     'SELECT user_id, total_seconds FROM voice_progress WHERE day_key = $1 ORDER BY total_seconds DESC',
     [dayKey]
   );
 
-  const embed = new EmbedBuilder().setColor(0x2b2d31).setTimestamp();
+  const embed = new EmbedBuilder()
+    .setColor(COLORS.PRIMARY)
+    .setTitle('📊 THỐNG KÊ THỜI GIAN HỌC')
+    .setDescription(`-# Ngày: **${dayKey}**`)
+    .setTimestamp();
 
   if (data.rows.length === 0) {
-    embed.setDescription(`## 📊 THỐNG KÊ THỜI GIAN HỌC\n*Ngày ${dayKey}*\n\n*Chưa có dữ liệu ghi nhận trong ca này.*`);
+    embed.setColor(COLORS.WARNING);
+    embed.addFields({
+      name: 'ℹ️ Chưa có dữ liệu',
+      value: 'Chưa có dữ liệu ghi nhận trong ca học này.\nHãy tham gia voice channel để bắt đầu ghi nhận!'
+    });
     return embed;
   }
 
-  let desc = `## 📊 THỐNG KÊ THỜI GIAN HỌC\n*Ngày: ${dayKey}*\n\n`;
-
+  // Fetch usernames
   await Promise.all(data.rows.map(async (row) => {
     try {
       const user = await client.users.fetch(row.user_id);
       row.username = user.username;
+      row.avatar = user.displayAvatarURL({ size: 64 });
     } catch {
-      row.username = row.user_id;
+      row.username = `User#${row.user_id.slice(-4)}`;
+      row.avatar = null;
     }
   }));
 
-  data.rows.forEach((row, index) => {
-    const hours    = String(Math.floor(row.total_seconds / 3600)).padStart(2, '0');
-    const mins     = String(Math.floor((row.total_seconds % 3600) / 60)).padStart(2, '0');
-    const totalMin = Math.floor(row.total_seconds / 60);
-    const status   = totalMin >= 150 ? 'Đạt ✅' : 'Chưa đạt ❌';
-    const rank     = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `**${index + 1}.**`;
-    desc += `${rank} **${row.username}**\n└ ⏱️ ${hours}h ${mins}m — *${status}*\n\n`;
+  // Calculate stats
+  const totalParticipants = data.rows.length;
+  const totalTime = data.rows.reduce((sum, r) => sum + r.total_seconds, 0);
+  const achievedCount = data.rows.filter(r => r.total_seconds >= 9000).length; // 150 min = 9000s
+
+  // Header stats
+  embed.addFields(
+    { name: '👥 Thành viên', value: `\`${totalParticipants}\` người`, inline: true },
+    { name: '⏱️ Tổng thời gian', value: `\`${formatDuration(totalTime)}\``, inline: true },
+    { name: '✅ Đạt mục tiêu', value: `\`${achievedCount}/${totalParticipants}\``, inline: true }
+  );
+
+  // Divider
+  embed.addFields({ name: '\u200b', value: '**🏆 BẢNG XẾP HẠNG**' });
+
+  // Top 3 get special treatment
+  data.rows.slice(0, 3).forEach((row, index) => {
+    const hours = Math.floor(row.total_seconds / 3600);
+    const mins = Math.floor((row.total_seconds % 3600) / 60);
+    const isAchieved = row.total_seconds >= 9000;
+    const progressBar = createProgressBar(row.total_seconds, 9000, 10);
+    const status = isAchieved ? '✅ Đạt' : '❌ Chưa đạt';
+    const statusColor = isAchieved ? COLORS.SUCCESS : COLORS.WARNING;
+
+    embed.addFields({
+      name: `${getRankEmoji(index)} ${row.username}`,
+      value:
+        `\`\`\`yaml\n` +
+        `Thời gian: ${hours}h ${String(mins).padStart(2, '0')}m\n` +
+        `Tiến độ:  ${progressBar}\n` +
+        `Trạng thái: ${status}\n` +
+        `\`\`\``,
+      inline: false
+    });
   });
 
-  embed.setDescription(desc.trim());
+  // Others (if any)
+  if (data.rows.length > 3) {
+    const others = data.rows.slice(3);
+    let othersText = '';
+    others.forEach((row, idx) => {
+      const dur = formatDuration(row.total_seconds);
+      const status = row.total_seconds >= 9000 ? '✅' : '❌';
+      othersText += `${getRankEmoji(idx + 3)} **${row.username}** — \`${dur}\` ${status}\n`;
+    });
+    embed.addFields({
+      name: '📋 Các vị trí còn lại',
+      value: othersText || '\u200b',
+      inline: false
+    });
+  }
+
+  embed.setFooter({ text: '🎯 Mục tiêu: 2h30m (150 phút) mỗi ca' });
   return embed;
 }
 
 // ====================== COUNTDOWN FEATURE ======================
 function buildCountdownEmbed() {
-  let desc = `## ⏳ Đếm Ngược Kỳ Thi\n\n`;
   const now = new Date();
+  const embed = new EmbedBuilder()
+    .setColor(COLORS.PRIMARY)
+    .setTitle('⏳ ĐẾM NGƯỢC KỲ THI')
+    .setDescription('-# Cập nhật mỗi ngày lúc 00:00')
+    .setTimestamp();
 
   for (const exam of EXAMS) {
     const unixTime = Math.floor(exam.date.getTime() / 1000);
@@ -384,44 +480,51 @@ function buildCountdownEmbed() {
 
     if (diffTime > 0) {
       const days = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-      desc += `### 📌 ${exam.name}\n`;
-      desc += `└ ⏰ **Thời gian:** <t:${unixTime}:F>\n`;
-      desc += `└ ⏳ **Còn lại:** **${days} ngày** (<t:${unixTime}:R>)\n\n`;
+      const hours = Math.floor((diffTime % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const progressBar = createProgressBar(Math.max(0, 365 - days), 365, 12);
+
+      embed.addFields({
+        name: `📌 ${exam.name}`,
+        value:
+          `> ⏰ **Thời gian:** <t:${unixTime}:F>\n` +
+          `> ⏳ **Còn lại:** **${days}** ngày ${hours}h (<t:${unixTime}:R>)\n` +
+          `> 📈 **Tiến độ năm:** \`${progressBar}\``,
+        inline: false
+      });
     } else {
-      desc += `### 📌 ${exam.name}\n`;
-      desc += `└ ✅ *Kỳ thi đã diễn ra vào <t:${unixTime}:D>!*\n\n`;
+      embed.addFields({
+        name: `📌 ${exam.name}`,
+        value: `> ✅ *Kỳ thi đã diễn ra vào <t:${unixTime}:D>!*`,
+        inline: false
+      });
     }
   }
 
-  // ── English Tip of the Day ──
+  return embed;
+}
+
+function buildEnglishTipEmbed() {
   const tip = ENGLISH_TIPS[Math.floor(Math.random() * ENGLISH_TIPS.length)];
 
-  desc += `\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-  desc += `## 📖 English Tip of the Day\n`;
-  desc += `**\`[${tip.tag}]\`**\n\n`;
-  desc += `${tip.en}\n`;
-  desc += `*🇻🇳 ${tip.vi}*\n\n`;
-  desc += `> 💡 ${tip.note}`;
-
   return new EmbedBuilder()
-    .setColor(0x5865f2)
-    .setDescription(desc.trim())
-    .setFooter({ text: '📚 Ôn tập mỗi ngày một chút — tích tiểu thành đại!' });
+    .setColor(COLORS.INFO)
+    .setTitle('📖 English Tip of the Day')
+    .setDescription(
+      `### 🏷️ ${tip.tag}\n\n` +
+      `> *${tip.en}*\n\n` +
+      `🇻🇳 **Dịch nghĩa:**\n${tip.vi}\n\n` +
+      `💡 **Ghi chú:**\n\`\`\`fix\n${tip.note}\n\`\`\``
+    )
+    .setFooter({ text: '📚 Ôn tập mỗi ngày một chút — tích tiểu thành đại!' })
+    .setTimestamp();
 }
 
 // ====================== QUIZ FEATURE ======================
-
-/**
- * Import danh sách câu hỏi từ mảng JSON vào database.
- * Bỏ qua câu nào có id đã tồn tại (ON CONFLICT DO NOTHING).
- * Trả về { inserted, skipped } count.
- */
 async function importQuestionsFromJSON(questions) {
   let inserted = 0;
   let skipped  = 0;
 
   for (const q of questions) {
-    // Validate tối thiểu
     if (!q.id || !q.subject || !q.question || !q.options || !q.correct) {
       skipped++;
       continue;
@@ -444,41 +547,40 @@ async function importQuestionsFromJSON(questions) {
   return { inserted, skipped };
 }
 
-/**
- * Gửi 1 câu quiz ngẫu nhiên (chưa dùng) lên kênh.
- * Sau khi gửi, đánh dấu sent_at = NOW() để tra cứu khi nhấn nút.
- */
 async function sendDailyQuiz(channelId = COUNTDOWN_CHANNEL_ID) {
   const channel = client.channels.cache.get(channelId);
   if (!channel) return debugLog('QUIZ', 'Không tìm thấy kênh Quiz.');
 
-  // Lấy 1 câu hỏi chưa gửi, ngẫu nhiên
   const res = await pool.query(
     'SELECT * FROM quiz_questions WHERE sent_at IS NULL ORDER BY RANDOM() LIMIT 1'
   );
 
   if (res.rows.length === 0) {
-    debugLog('QUIZ', '⚠️ Ngân hàng câu hỏi đã hết! Hãy dùng /addquestion để thêm câu mới.');
-    await channel.send({ content: '⚠️ **Ngân hàng câu hỏi đã hết!** Admin vui lòng dùng `/addquestion` để bổ sung.' });
+    debugLog('QUIZ', '⚠️ Ngân hàng câu hỏi đã hết!');
+    const warnEmbed = new EmbedBuilder()
+      .setColor(COLORS.WARNING)
+      .setTitle('⚠️ Hết câu hỏi')
+      .setDescription('Ngân hàng câu hỏi đã hết! Admin vui lòng dùng `/addquestion` để bổ sung.')
+      .setFooter({ text: '💡 Sử dụng /quizstats để xem thống kê kho câu hỏi' });
+    await channel.send({ embeds: [warnEmbed] });
     return;
   }
 
   const q = res.rows[0];
-
-  // Đánh dấu đã gửi
   await pool.query('UPDATE quiz_questions SET sent_at = NOW() WHERE id = $1', [q.id]);
 
   const embed = new EmbedBuilder()
-    .setTitle(`📝 DAILY QUIZ — MÔN ${q.subject.toUpperCase()}`)
-    .setColor(0xffcc00)
+    .setColor(COLORS.ORANGE)
+    .setTitle(`📝 DAILY QUIZ — ${q.subject.toUpperCase()}`)
     .setDescription(
-      `**${q.question}**\n\n` +
+      `### ❓ Câu hỏi\n${q.question}\n\n` +
       `**A.** ${q.options.A}\n` +
       `**B.** ${q.options.B}\n` +
       `**C.** ${q.options.C}\n` +
       `**D.** ${q.options.D}`
     )
-    .setFooter({ text: 'Chọn đáp án bên dưới — chỉ bạn thấy kết quả!' });
+    .setFooter({ text: '⏱️ Chọn đáp án bên dưới — chỉ bạn thấy kết quả!' })
+    .setTimestamp();
 
   if (q.image_url) embed.setImage(q.image_url);
 
@@ -545,7 +647,7 @@ cron.schedule(parseTimeToCron(VOICE_START_TIME), async () => {
   await startTrackingSession(dayKey);
 }, { timezone: TIMEZONE });
 
-// 2. Kết thúc ca học — chốt sổ tất cả user còn online
+// 2. Kết thúc ca học
 cron.schedule(parseTimeToCron(VOICE_END_TIME), async () => {
   const promises = [];
   for (const [userId, startTime] of voiceStartTimes.entries()) {
@@ -584,18 +686,23 @@ cron.schedule('*/5 * * * *', async () => {
   if (savedCount > 0) debugLog('AUTO-SAVE', `Đã đồng bộ thời gian cho ${savedCount} users.`);
 }, { timezone: TIMEZONE });
 
-// 5. Countdown kỳ thi — gửi lúc 00:00 mỗi ngày
+// 5. Countdown + English Tip — gửi lúc 00:00 mỗi ngày
 cron.schedule('0 0 * * *', async () => {
   const channel = client.channels.cache.get(COUNTDOWN_CHANNEL_ID);
-  if (channel) {
-    await channel.send({ embeds: [buildCountdownEmbed()] });
-    debugLog('COUNTDOWN', 'Đã gửi thông báo đếm ngược lúc nửa đêm.');
-  } else {
+  if (!channel) {
     debugLog('COUNTDOWN', 'Không tìm thấy kênh đếm ngược.');
+    return;
   }
+
+  // Gửi countdown embed
+  await channel.send({ embeds: [buildCountdownEmbed()] });
+  // Gửi english tip embed riêng biệt
+  await channel.send({ embeds: [buildEnglishTipEmbed()] });
+
+  debugLog('COUNTDOWN', 'Đã gửi thông báo đếm ngược + English Tip lúc nửa đêm.');
 }, { timezone: TIMEZONE });
 
-// 6. Daily Quiz — gửi 5 lần/ngày: 6h, 10h, 14h, 18h, 21h
+// 6. Daily Quiz — gửi 5 lần/ngày
 cron.schedule('0 6,10,14,18,21 * * *', async () => {
   debugLog('CRON', 'Tới giờ gửi Daily Quiz!');
   await sendDailyQuiz();
@@ -626,27 +733,35 @@ client.on('interactionCreate', async interaction => {
 
   // ── Xử lý nút bấm quiz ──
   if (interaction.isButton() && interaction.customId.startsWith('quiz_')) {
-    // customId dạng: quiz_{id}_{option}  — vd: quiz_VN_01_B
     const parts  = interaction.customId.split('_');
-    const chosen = parts.pop();             // Ký tự cuối = đáp án người chọn
-    const qId    = parts.slice(1).join('_'); // Phần giữa = ID câu hỏi
+    const chosen = parts.pop();
+    const qId    = parts.slice(1).join('_');
 
     const res = await pool.query('SELECT * FROM quiz_questions WHERE id = $1', [qId]);
     const q   = res.rows[0];
 
     if (!q) {
-      return interaction.reply({ content: '❌ Câu hỏi này đã hết hạn hoặc bị lỗi dữ liệu!', ephemeral: true });
+      const errEmbed = new EmbedBuilder()
+        .setColor(COLORS.DANGER)
+        .setTitle('❌ Lỗi')
+        .setDescription('Câu hỏi này đã hết hạn hoặc bị lỗi dữ liệu!');
+      return interaction.reply({ embeds: [errEmbed], ephemeral: true });
     }
 
     const isCorrect = chosen === q.correct;
 
     const replyEmbed = new EmbedBuilder()
-      .setTitle(isCorrect ? '✅ CHÍNH XÁC! TUYỆT VỜI!' : '❌ RẤT TIẾC, SAI RỒI!')
-      .setColor(isCorrect ? 0x00ff88 : 0xff3333)
+      .setTitle(isCorrect ? '✅ CHÍNH XÁC!' : '❌ RẤT TIẾC!')
+      .setColor(isCorrect ? COLORS.SUCCESS : COLORS.DANGER)
       .setDescription(
-        `Bạn đã chọn **${chosen}**.\n` +
-        `Đáp án đúng là: **${q.correct}** — ${q.options[q.correct]}`
-      );
+        `Bạn đã chọn: **${chosen}** — ${q.options[chosen]}\n\n` +
+        `Đáp án đúng: **${q.correct}** — ${q.options[q.correct]}`
+      )
+      .setFooter({
+        text: isCorrect
+          ? '🎉 Tuyệt vời! Tiếp tục phát huy nhé!'
+          : '💪 Đừng nản! Hãy xem lại ghi chú và thử lại sau.'
+      });
 
     return interaction.reply({ embeds: [replyEmbed], ephemeral: true });
   }
@@ -659,38 +774,60 @@ client.on('interactionCreate', async interaction => {
     try {
       const res = await pool.query('SELECT day_key FROM voice_progress ORDER BY day_key DESC LIMIT 1');
       const targetDayKey = currentDayKey || res.rows[0]?.day_key;
-      if (!targetDayKey) return interaction.reply({ content: '📭 Chưa có dữ liệu ghi nhận.', ephemeral: true });
+      if (!targetDayKey) {
+        const emptyEmbed = new EmbedBuilder()
+          .setColor(COLORS.WARNING)
+          .setTitle('📭 Chưa có dữ liệu')
+          .setDescription('Chưa có dữ liệu ghi nhận nào. Hãy tham gia voice channel trong ca học để bắt đầu!');
+        return interaction.reply({ embeds: [emptyEmbed], ephemeral: true });
+      }
       const embed = await buildLeaderboardEmbed(targetDayKey);
       await interaction.reply({ embeds: [embed] });
     } catch (err) {
       debugLog('CMD_ERR', `Lỗi /check: ${err.message}`);
-      await interaction.reply({ content: '❌ Lỗi hệ thống, vui lòng thử lại sau.', ephemeral: true });
+      const errEmbed = new EmbedBuilder()
+        .setColor(COLORS.DANGER)
+        .setTitle('❌ Lỗi hệ thống')
+        .setDescription('Đã xảy ra lỗi, vui lòng thử lại sau.');
+      await interaction.reply({ embeds: [errEmbed], ephemeral: true });
     }
   }
 
-  // /debug — admin test giao diện countdown + quiz
+  // /debug — admin test giao diện
   if (interaction.commandName === 'debug') {
     const mode = interaction.options.getString('mode') || 'countdown';
     if (mode === 'quiz') {
-      await interaction.reply({ content: '⏳ Đang tải câu hỏi thử...', ephemeral: true });
+      const loadingEmbed = new EmbedBuilder()
+        .setColor(COLORS.INFO)
+        .setDescription('⏳ Đang tải câu hỏi thử...');
+      await interaction.reply({ embeds: [loadingEmbed], ephemeral: true });
       await sendDailyQuiz(interaction.channelId);
-    } else {
+    } else if (mode === 'countdown') {
       await interaction.reply({ embeds: [buildCountdownEmbed()] });
+    } else if (mode === 'tip') {
+      await interaction.reply({ embeds: [buildEnglishTipEmbed()] });
+    } else {
+      // Send all
+      await interaction.reply({ embeds: [buildCountdownEmbed()] });
+      await interaction.followUp({ embeds: [buildEnglishTipEmbed()], ephemeral: true });
     }
   }
 
-  // /addquestion — admin import file JSON câu hỏi
+  // /addquestion — admin import file JSON
   if (interaction.commandName === 'addquestion') {
     await interaction.deferReply({ ephemeral: true });
 
     const attachment = interaction.options.getAttachment('file');
 
     if (!attachment.name.endsWith('.json')) {
-      return interaction.editReply('❌ Vui lòng đính kèm file `.json`!');
+      const errEmbed = new EmbedBuilder()
+        .setColor(COLORS.DANGER)
+        .setTitle('❌ Sai định dạng')
+        .setDescription('Vui lòng đính kèm file `.json`!');
+      return interaction.editReply({ embeds: [errEmbed] });
     }
 
     try {
-      // Fetch nội dung file từ Discord CDN
       const response = await fetch(attachment.url);
       if (!response.ok) throw new Error(`Không tải được file: ${response.statusText}`);
 
@@ -698,23 +835,27 @@ client.on('interactionCreate', async interaction => {
       const questions = JSON.parse(text);
 
       if (!Array.isArray(questions)) {
-        return interaction.editReply('❌ File JSON phải là một **mảng** (array) các câu hỏi!');
+        const errEmbed = new EmbedBuilder()
+          .setColor(COLORS.DANGER)
+          .setTitle('❌ Sai cấu trúc')
+          .setDescription('File JSON phải là một **mảng** (array) các câu hỏi!');
+        return interaction.editReply({ embeds: [errEmbed] });
       }
 
       const { inserted, skipped } = await importQuestionsFromJSON(questions);
 
-      // Đếm tổng câu chưa dùng còn trong kho
       const countRes = await pool.query('SELECT COUNT(*) FROM quiz_questions WHERE sent_at IS NULL');
       const remaining = countRes.rows[0].count;
 
       const resultEmbed = new EmbedBuilder()
-        .setTitle('📚 Kết quả Import Ngân Hàng Câu Hỏi')
-        .setColor(0x00ff88)
+        .setTitle('📚 Kết quả Import')
+        .setColor(COLORS.SUCCESS)
         .setDescription(
-          `✅ **Thêm mới thành công:** ${inserted} câu\n` +
-          `⏭️ **Bỏ qua (trùng ID hoặc lỗi):** ${skipped} câu\n\n` +
-          `📦 **Tổng câu chưa dùng trong kho:** ${remaining} câu`
+          `✅ **Thêm mới:** \`${inserted}\` câu\n` +
+          `⏭️ **Bỏ qua:** \`${skipped}\` câu\n\n` +
+          `📦 **Tổng câu chưa dùng:** \`${remaining}\` câu`
         )
+        .setFooter({ text: `Thực hiện bởi ${interaction.user.username}` })
         .setTimestamp();
 
       await interaction.editReply({ embeds: [resultEmbed] });
@@ -722,7 +863,11 @@ client.on('interactionCreate', async interaction => {
 
     } catch (err) {
       debugLog('QUIZ_IMPORT_ERR', err.message);
-      await interaction.editReply(`❌ Lỗi khi đọc file: \`${err.message}\``);
+      const errEmbed = new EmbedBuilder()
+        .setColor(COLORS.DANGER)
+        .setTitle('❌ Lỗi đọc file')
+        .setDescription(`\`${err.message}\``);
+      await interaction.editReply({ embeds: [errEmbed] });
     }
   }
 
@@ -740,17 +885,26 @@ client.on('interactionCreate', async interaction => {
 
       const embed = new EmbedBuilder()
         .setTitle('📊 Thống Kê Ngân Hàng Câu Hỏi')
-        .setColor(0x5865f2)
+        .setColor(COLORS.PRIMARY)
+        .addFields(
+          { name: '📦 Tổng câu hỏi', value: `\`${total}\``, inline: true },
+          { name: '✅ Chưa dùng', value: `\`${remaining}\``, inline: true },
+          { name: '✔️ Đã gửi', value: `\`${used}\``, inline: true }
+        )
         .setDescription(
-          `📦 **Tổng:** ${total} câu\n` +
-          `✅ **Chưa dùng:** ${remaining} câu\n` +
-          `✔️ **Đã gửi:** ${used} câu`
+          remaining < 10
+            ? '⚠️ **Cảnh báo:** Số câu hỏi còn lại đang thấp, hãy import thêm!'
+            : '📚 Kho câu hỏi đang ổn định.'
         )
         .setTimestamp();
 
       await interaction.reply({ embeds: [embed], ephemeral: true });
     } catch (err) {
-      await interaction.reply({ content: '❌ Lỗi hệ thống.', ephemeral: true });
+      const errEmbed = new EmbedBuilder()
+        .setColor(COLORS.DANGER)
+        .setTitle('❌ Lỗi hệ thống')
+        .setDescription('Không thể lấy thống kê, vui lòng thử lại sau.');
+      await interaction.reply({ embeds: [errEmbed], ephemeral: true });
     }
   }
 });
@@ -776,7 +930,9 @@ client.once('ready', async () => {
           .setRequired(false)
           .addChoices(
             { name: 'Countdown kỳ thi', value: 'countdown' },
-            { name: 'Daily Quiz',       value: 'quiz'      }
+            { name: 'Daily Quiz',       value: 'quiz'      },
+            { name: 'English Tip',      value: 'tip'       },
+            { name: 'Tất cả',           value: 'all'       }
           )
       )
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
