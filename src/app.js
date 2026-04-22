@@ -32,21 +32,239 @@ const EXAMS = [
   { name: 'Kỳ thi Tốt nghiệp THPT Quốc Gia 2026',    date: new Date('2026-06-11T07:30:00+07:00') }
 ];
 
-const MOTIVATIONAL_QUOTES = [
-  '"Thiên tài 1% là cảm hứng và 99% là mồ hôi." — Thomas Edison',
-  '"Kẻ duy nhất bạn nên cố gắng để giỏi hơn, chính là bạn của ngày hôm qua." — Sigmund Freud',
-  '"Giáo dục là vũ khí mạnh nhất mà bạn có thể dùng để thay đổi thế giới." — Nelson Mandela',
-  '"Tương lai thuộc về những người tin vào vẻ đẹp trong những giấc mơ của họ." — Eleanor Roosevelt',
-  '"Sự nỗ lực trọn vẹn là chiến thắng trọn vẹn." — Mahatma Gandhi',
-  '"Đừng sợ thất bại, mà hãy sợ việc không dám thử." — Roy T. Bennett',
-  '"Without hard work, nothing grows but weeds." — Gordon B. Hinckley',
-  '"If your dreams do not scare you, they are not big enough." — Ellen Johnson Sirleaf',
-  '"Học tập là ngọn lửa duy nhất có thể cháy mãi mãi trong tâm hồn một con người." — Albert Einstein',
-  '"Tri thức là sức mạnh. Học tập là cánh cửa mở ra thế giới mới." — Malcolm X',
-  '"Công việc của học tập không phải là nhận biết cái gì đó mới, mà là làm cho chúng ta trở thành người mới." — John C. Maxwell',
-  '"You can\'t learn what you think you already know."',
-  '"Continuous learning is essential because life continuously provides lessons."'
+// Mỗi tip gồm: en (câu tiếng Anh), vi (dịch nghĩa), tag (loại cấu trúc), note (giải thích ngắn)
+const ENGLISH_TIPS = [
+  // ── PHRASAL VERBS ──
+  {
+    en:   '"Never give up on your dreams, no matter how difficult things get."',
+    vi:   'Đừng bao giờ từ bỏ ước mơ, dù mọi thứ có khó khăn đến đâu.',
+    tag:  'Phrasal Verb',
+    note: 'give up (on sth) = từ bỏ. Trái nghĩa: keep going / persist.'
+  },
+  {
+    en:   '"You need to keep up with the latest knowledge if you want to stand out."',
+    vi:   'Bạn cần theo kịp kiến thức mới nhất nếu muốn nổi bật.',
+    tag:  'Phrasal Verb',
+    note: 'keep up with = theo kịp | stand out = nổi bật, khác biệt.'
+  },
+  {
+    en:   '"I am looking forward to seeing the results of all my hard work."',
+    vi:   'Tôi đang mong chờ được thấy kết quả của tất cả công sức của mình.',
+    tag:  'Phrasal Verb',
+    note: 'look forward to + V-ing (không dùng to V). Cấu trúc hay bị nhầm trong thi!'
+  },
+  {
+    en:   '"Stop putting off your revision — the exam is just around the corner."',
+    vi:   'Hãy ngừng trì hoãn việc ôn bài — kỳ thi đã gần kề rồi.',
+    tag:  'Phrasal Verb',
+    note: 'put off + V-ing = trì hoãn. "just around the corner" = sắp đến nơi.'
+  },
+  {
+    en:   '"She had to go through many hardships before she finally succeeded."',
+    vi:   'Cô ấy phải trải qua nhiều gian khó trước khi cuối cùng thành công.',
+    tag:  'Phrasal Verb',
+    note: 'go through = trải qua (khó khăn, thử thách). go through + noun.'
+  },
+  {
+    en:   '"Extra practice can make up for the time you lost earlier."',
+    vi:   'Luyện tập thêm có thể bù đắp cho thời gian bạn đã lãng phí trước đó.',
+    tag:  'Phrasal Verb',
+    note: 'make up for sth = bù đắp, bù lại cho điều gì đó.'
+  },
+  {
+    en:   '"It is never too late to catch up with your classmates if you work smart."',
+    vi:   'Không bao giờ là quá muộn để bắt kịp các bạn cùng lớp nếu bạn học đúng cách.',
+    tag:  'Phrasal Verb',
+    note: 'catch up with = bắt kịp. "It is never too late to + V" — cấu trúc phổ biến.'
+  },
+  {
+    en:   '"He decided to take up a new language to broaden his horizons."',
+    vi:   'Anh ấy quyết định bắt đầu học một ngôn ngữ mới để mở rộng tầm nhìn.',
+    tag:  'Phrasal Verb',
+    note: 'take up = bắt đầu một thói quen/sở thích mới. broaden horizons = collocation.'
+  },
+  {
+    en:   '"They came up with a creative solution to the problem together."',
+    vi:   'Họ cùng nhau nghĩ ra một giải pháp sáng tạo cho vấn đề.',
+    tag:  'Phrasal Verb',
+    note: 'come up with = nghĩ ra, đề xuất (ý tưởng/giải pháp).'
+  },
+  {
+    en:   '"Do not turn down any opportunity to learn something new."',
+    vi:   'Đừng từ chối bất kỳ cơ hội nào để học điều gì đó mới.',
+    tag:  'Phrasal Verb',
+    note: 'turn down = từ chối (lời đề nghị, cơ hội). Khác với refuse (dùng cho request).'
+  },
+  {
+    en:   '"You can get over any obstacle if you believe in yourself."',
+    vi:   'Bạn có thể vượt qua bất kỳ trở ngại nào nếu bạn tin vào bản thân.',
+    tag:  'Phrasal Verb',
+    note: 'get over = vượt qua (khó khăn, nỗi đau). believe in yourself = tin vào bản thân.'
+  },
+  {
+    en:   '"Do not run out of time during the exam — manage it wisely."',
+    vi:   'Đừng để hết thời gian trong kỳ thi — hãy quản lý thời gian khôn ngoan.',
+    tag:  'Phrasal Verb',
+    note: 'run out of = hết (thứ gì đó). run out of time/money/energy.'
+  },
+
+  // ── COLLOCATIONS ──
+  {
+    en:   '"Make progress every single day, even if the steps are small."',
+    vi:   'Hãy tiến bộ mỗi ngày, dù những bước tiến chỉ nhỏ thôi.',
+    tag:  'Collocation',
+    note: 'make progress (✓) — KHÔNG nói "do progress". Collocation cố định!'
+  },
+  {
+    en:   '"Pay close attention to grammar rules — they decide your score."',
+    vi:   'Hãy chú ý kỹ các quy tắc ngữ pháp — chúng quyết định điểm số của bạn.',
+    tag:  'Collocation',
+    note: 'pay attention to (✓) — KHÔNG nói "give attention". pay + attention = cặp cố định.'
+  },
+  {
+    en:   '"Take responsibility for your own learning — nobody can do it for you."',
+    vi:   'Hãy chịu trách nhiệm cho việc học của chính bạn — không ai có thể làm thay bạn.',
+    tag:  'Collocation',
+    note: 'take responsibility for sth (✓) — KHÔNG nói "make responsibility".'
+  },
+  {
+    en:   '"Reading widely helps you gain knowledge and broaden your vocabulary."',
+    vi:   'Đọc sách rộng rãi giúp bạn thu nhận kiến thức và mở rộng vốn từ vựng.',
+    tag:  'Collocation',
+    note: 'gain knowledge/experience/skills (✓) | broaden vocabulary (✓) — cặp collocation phổ biến.'
+  },
+  {
+    en:   '"Make an effort to review your notes every night before you sleep."',
+    vi:   'Hãy cố gắng ôn lại ghi chú của bạn mỗi tối trước khi ngủ.',
+    tag:  'Collocation',
+    note: 'make an effort (✓) — KHÔNG nói "do an effort". Cũng có: make a great/strong effort.'
+  },
+  {
+    en:   '"A single hour of focused study can make a real difference."',
+    vi:   'Chỉ một tiếng đồng hồ học tập tập trung có thể tạo ra sự khác biệt thực sự.',
+    tag:  'Collocation',
+    note: 'make a difference (✓) — tạo ra sự khác biệt. Cũng dùng: make a big/real difference.'
+  },
+  {
+    en:   '"Face challenges with courage and you will fulfill your full potential."',
+    vi:   'Đối mặt với thử thách bằng dũng cảm và bạn sẽ phát huy hết tiềm năng của mình.',
+    tag:  'Collocation',
+    note: 'face challenges (✓) | fulfill potential (✓) — hai collocation quan trọng.'
+  },
+  {
+    en:   '"Burning the midnight oil helped him achieve his academic goals."',
+    vi:   'Thức khuya học bài đã giúp anh ấy đạt được mục tiêu học tập.',
+    tag:  'Collocation + Idiom',
+    note: 'burn the midnight oil = thức khuya làm việc/học. achieve goals (✓) — KHÔNG nói "reach" khi nói về mục tiêu học tập.'
+  },
+
+  // ── CONDITIONAL SENTENCES ──
+  {
+    en:   '"If you study hard, you will pass the exam with flying colours."',
+    vi:   'Nếu bạn học chăm chỉ, bạn sẽ vượt qua kỳ thi một cách xuất sắc.',
+    tag:  'Conditional Type 1',
+    note: 'If + S + V(s/es), S + will + V. "with flying colours" = đậu xuất sắc.'
+  },
+  {
+    en:   '"If I were in your shoes, I would never give up on my dreams."',
+    vi:   'Nếu tôi ở vị trí của bạn, tôi sẽ không bao giờ từ bỏ ước mơ của mình.',
+    tag:  'Conditional Type 2',
+    note: 'If + S + were/V-ed, S + would + V. "in your shoes" = ở vị trí của bạn — hay dùng!'
+  },
+  {
+    en:   '"If she had started earlier, she would have avoided so much stress."',
+    vi:   'Nếu cô ấy bắt đầu sớm hơn, cô ấy đã không phải chịu nhiều áp lực như vậy.',
+    tag:  'Conditional Type 3',
+    note: 'If + S + had + V3, S + would have + V3. Diễn tả điều KHÔNG xảy ra trong quá khứ.'
+  },
+  {
+    en:   '"I wish I had paid more attention in class last year."',
+    vi:   'Tôi ước gì mình đã chú ý hơn trong lớp năm ngoái.',
+    tag:  'Wish Sentence (past)',
+    note: 'wish + S + had + V3 = ước điều đã không xảy ra trong quá khứ. Khác với "I wish I could...".'
+  },
+
+  // ── PASSIVE VOICE ──
+  {
+    en:   '"Great things are achieved by those who refuse to stop trying."',
+    vi:   'Những điều vĩ đại được thực hiện bởi những người từ chối ngừng cố gắng.',
+    tag:  'Passive Voice',
+    note: 'S + am/is/are + V3. Bị động thì hiện tại đơn. "refuse to + V" = từ chối làm gì.'
+  },
+  {
+    en:   '"This exam has been taken by millions of students over the years."',
+    vi:   'Kỳ thi này đã được hàng triệu học sinh tham dự trong nhiều năm qua.',
+    tag:  'Passive Voice',
+    note: 'S + has/have + been + V3. Bị động thì hiện tại hoàn thành.'
+  },
+
+  // ── RELATIVE CLAUSES ──
+  {
+    en:   '"Students who work consistently are the ones who achieve the best results."',
+    vi:   'Những học sinh học đều đặn là những người đạt được kết quả tốt nhất.',
+    tag:  'Relative Clause',
+    note: 'who = đại từ quan hệ thay thế cho người (subject). Không dùng "which" cho người.'
+  },
+  {
+    en:   '"The knowledge that you gain today is an investment in your future."',
+    vi:   'Kiến thức mà bạn thu nhận hôm nay là một khoản đầu tư cho tương lai của bạn.',
+    tag:  'Relative Clause',
+    note: 'that/which = đại từ quan hệ thay thế cho vật. Có thể bỏ "that" khi nó là tân ngữ.'
+  },
+
+  // ── GERUND vs TO-INFINITIVE ──
+  {
+    en:   '"Avoid making the same mistake twice — learning from failure is key."',
+    vi:   'Tránh mắc cùng một lỗi hai lần — học hỏi từ thất bại là điều then chốt.',
+    tag:  'Gerund',
+    note: 'avoid + V-ing (✓). Nhóm động từ + V-ing: avoid, enjoy, mind, consider, suggest...'
+  },
+  {
+    en:   '"Remember to review your answers before handing in your exam paper."',
+    vi:   'Hãy nhớ kiểm tra lại đáp án trước khi nộp bài thi.',
+    tag:  'Gerund vs To-inf',
+    note: 'remember to V = nhớ để làm (tương lai). remember V-ing = nhớ lại đã làm (quá khứ).'
+  },
+  {
+    en:   '"He tried to concentrate on studying despite the loud noise outside."',
+    vi:   'Anh ấy cố gắng tập trung vào việc học dù có tiếng ồn lớn bên ngoài.',
+    tag:  'To-Infinitive',
+    note: 'try to V = cố gắng làm. Khác với try V-ing = thử làm xem sao. concentrate on + V-ing.'
+  },
+
+  // ── SO...THAT / SUCH...THAT ──
+  {
+    en:   '"She was so determined that nothing could stop her from reaching her goal."',
+    vi:   'Cô ấy quyết tâm đến mức không gì có thể ngăn cô ấy đạt được mục tiêu.',
+    tag:  'So...That',
+    note: 'so + adj/adv + that + clause. Còn có: such + a/an + adj + noun + that.'
+  },
+
+  // ── NOT ONLY...BUT ALSO ──
+  {
+    en:   '"Not only does hard work build skills, but it also builds character."',
+    vi:   'Làm việc chăm chỉ không chỉ xây dựng kỹ năng, mà còn rèn luyện nhân cách.',
+    tag:  'Not only...but also (Đảo ngữ)',
+    note: 'Not only + auxiliary + S + V, but S + also + V. Đảo ngữ với "not only" ở đầu câu!'
+  },
+
+  // ── THE + COMPARATIVE ──
+  {
+    en:   '"The harder you work now, the easier the exam will be on the day."',
+    vi:   'Bạn càng nỗ lực nhiều hơn bây giờ, kỳ thi sẽ càng dễ dàng hơn vào ngày đó.',
+    tag:  'Double Comparative',
+    note: 'The + comparative, the + comparative = càng... càng... Cấu trúc THPTQG rất hay ra!'
+  },
+
+  // ── DESPITE / IN SPITE OF ──
+  {
+    en:   '"Despite feeling nervous, she walked in and gave her best performance."',
+    vi:   'Mặc dù cảm thấy lo lắng, cô ấy bước vào và thể hiện tốt nhất có thể.',
+    tag:  'Despite / In spite of',
+    note: 'despite / in spite of + N / V-ing. KHÔNG dùng despite + clause (phải dùng although).'
+  },
 ];
+
 
 // ==================== KHỞI TẠO CLIENT & POOL ====================
 const pool = new pg.Pool({ connectionString: process.env.POSTGRES_URL });
@@ -166,18 +384,29 @@ function buildCountdownEmbed() {
 
     if (diffTime > 0) {
       const days = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-      desc += `### ${exam.name}\n└ ⏰ **Thời gian:** <t:${unixTime}:F>\n└ ⏳ **Còn lại:** **${days} ngày** (<t:${unixTime}:R>)\n\n`;
+      desc += `### 📌 ${exam.name}\n`;
+      desc += `└ ⏰ **Thời gian:** <t:${unixTime}:F>\n`;
+      desc += `└ ⏳ **Còn lại:** **${days} ngày** (<t:${unixTime}:R>)\n\n`;
     } else {
-      desc += `### ${exam.name}\n└ *Kỳ thi đã diễn ra vào <t:${unixTime}:D>!*\n\n`;
+      desc += `### 📌 ${exam.name}\n`;
+      desc += `└ ✅ *Kỳ thi đã diễn ra vào <t:${unixTime}:D>!*\n\n`;
     }
   }
 
-  const quote = MOTIVATIONAL_QUOTES[Math.floor(Math.random() * MOTIVATIONAL_QUOTES.length)];
+  // ── English Tip of the Day ──
+  const tip = ENGLISH_TIPS[Math.floor(Math.random() * ENGLISH_TIPS.length)];
+
+  desc += `\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  desc += `## 📖 English Tip of the Day\n`;
+  desc += `**\`[${tip.tag}]\`**\n\n`;
+  desc += `${tip.en}\n`;
+  desc += `*🇻🇳 ${tip.vi}*\n\n`;
+  desc += `> 💡 ${tip.note}`;
 
   return new EmbedBuilder()
     .setColor(0x5865f2)
     .setDescription(desc.trim())
-    .setFooter({ text: quote });
+    .setFooter({ text: '📚 Ôn tập mỗi ngày một chút — tích tiểu thành đại!' });
 }
 
 // ====================== QUIZ FEATURE ======================
