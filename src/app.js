@@ -684,6 +684,75 @@ function buildEnglishTipEmbed() {
     .setTimestamp();
 }
 
+// ====================== QUIZTOP PAGINATION ======================
+const QUIZTOP_PER_PAGE = 3;
+
+async function buildQuizTopEmbed(rows, page, totalPages) {
+  const startIdx = (page - 1) * QUIZTOP_PER_PAGE;
+  const pageRows = rows.slice(startIdx, startIdx + QUIZTOP_PER_PAGE);
+
+  const embed = new EmbedBuilder()
+    .setColor(COLORS.GOLD)
+    .setTitle('🏆 BẢNG XẾP HẠNG QUIZ')
+    .setDescription(`Tổng **${rows.length}** người chơi | Trang **${page}/${totalPages}**`)
+    .setTimestamp();
+
+  await Promise.all(pageRows.map(async (row) => {
+    try {
+      const user = await client.users.fetch(row.user_id);
+      row.username = user.username;
+    } catch {
+      row.username = `User#${row.user_id.slice(-4)}`;
+    }
+  }));
+
+  pageRows.forEach((row, idx) => {
+    const globalIdx = startIdx + idx;
+    const rank = getRankEmoji(globalIdx);
+    const rankInfo = getQuizRankInfo(row.total_points);
+    const accuracy = row.total_answered > 0
+      ? Math.round((row.correct_count / row.total_answered) * 100)
+      : 0;
+
+    embed.addFields({
+      name: `${rank} ${row.username}`,
+      value:
+        `\`\`\`yaml\n` +
+        `Điểm:   ${row.total_points}\n` +
+        `Rank:   ${rankInfo.current.name}\n` +
+        `Đúng:   ${row.correct_count}/${row.total_answered} (${accuracy}%)\n` +
+        `Streak: ${formatStreakEmoji(row.longest_quiz_streak)} ${row.longest_quiz_streak}\n` +
+        `\`\`\``,
+      inline: false
+    });
+  });
+
+  embed.setFooter({ text: `Trang ${page}/${totalPages} · Dùng nút bên dưới để chuyển trang` });
+  return embed;
+}
+
+function buildQuizTopButtons(page, totalPages) {
+  const prevBtn = new ButtonBuilder()
+    .setCustomId(`quiztop_page_${page - 1}`)
+    .setLabel('◀ Trước')
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(page <= 1);
+
+  const pageBtn = new ButtonBuilder()
+    .setCustomId('quiztop_page_info')
+    .setLabel(`${page} / ${totalPages}`)
+    .setStyle(ButtonStyle.Primary)
+    .setDisabled(true);
+
+  const nextBtn = new ButtonBuilder()
+    .setCustomId(`quiztop_page_${page + 1}`)
+    .setLabel('Sau ▶')
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(page >= totalPages);
+
+  return new ActionRowBuilder().addComponents(prevBtn, pageBtn, nextBtn);
+}
+
 // ====================== QUIZ FEATURE ======================
 async function importQuestionsFromJSON(questions) {
   let inserted = 0;
@@ -862,10 +931,29 @@ cron.schedule('0 0 * * *', async () => {
   debugLog('COUNTDOWN', 'Đã gửi thông báo đếm ngược + English Tip lúc nửa đêm.');
 }, { timezone: TIMEZONE });
 
-cron.schedule('0 7,10,14,18,21,22,23 * * *', async () => {
-  debugLog('CRON', 'Tới giờ gửi Daily Quiz!');
-  await sendDailyQuiz();
-}, { timezone: TIMEZONE });
+// ── Lịch Quiz: 10 lần/ngày ──
+// Khung sáng  07h–11h : 3 lần → 07:10 | 08:55 | 10:40
+// Khung chiều 13h–17h : 2 lần → 13:20 | 16:05
+// Khung tối   19h–23h : 5 lần → 19:00 | 19:50 | 20:45 | 21:40 | 22:35
+const QUIZ_SCHEDULE = [
+  '10 7  * * *',   // 07:10 — Khởi động buổi sáng
+  '55 8  * * *',   // 08:55 — Giữa buổi sáng
+  '40 10 * * *',   // 10:40 — Cuối buổi sáng
+  '20 13 * * *',   // 13:20 — Sau giờ trưa
+  '5  16 * * *',   // 16:05 — Cuối giờ chiều
+  '0  19 * * *',   // 19:00 — Mở đầu ca tối
+  '50 19 * * *',   // 19:50 — Khởi động học
+  '45 20 * * *',   // 20:45 — Giữa ca tối
+  '40 21 * * *',   // 21:40 — Cao điểm tối
+  '35 22 * * *',   // 22:35 — Trước khi nghỉ
+];
+
+for (const cronExpr of QUIZ_SCHEDULE) {
+  cron.schedule(cronExpr, async () => {
+    debugLog('CRON', `Tới giờ gửi Daily Quiz! (${cronExpr.trim()})`);
+    await sendDailyQuiz();
+  }, { timezone: TIMEZONE });
+}
 
 // ====================== SỰ KIỆN VOICE ======================
 client.on('voiceStateUpdate', async (oldState, newState) => {
@@ -889,6 +977,35 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
 // ====================== SỰ KIỆN INTERACTION ======================
 client.on('interactionCreate', async interaction => {
+
+  // ── Xử lý nút phân trang /quiztop ──
+  if (interaction.isButton() && interaction.customId.startsWith('quiztop_page_')) {
+    const targetPage = parseInt(interaction.customId.split('_')[2]);
+    if (isNaN(targetPage) || targetPage < 1) return;
+
+    try {
+      await interaction.deferUpdate();
+
+      const res = await pool.query(`
+        SELECT * FROM quiz_scores
+        WHERE total_answered > 0
+        ORDER BY total_points DESC
+      `);
+
+      if (res.rows.length === 0) return;
+
+      const totalPages = Math.ceil(res.rows.length / QUIZTOP_PER_PAGE);
+      const page = Math.min(Math.max(targetPage, 1), totalPages);
+
+      const embed = await buildQuizTopEmbed(res.rows, page, totalPages);
+      const components = totalPages > 1 ? [buildQuizTopButtons(page, totalPages)] : [];
+
+      await interaction.editReply({ embeds: [embed], components });
+    } catch (err) {
+      debugLog('CMD_ERR', `Lỗi nút quiztop: ${err.message}`);
+    }
+    return;
+  }
 
   // ── Xử lý nút bấm quiz ──
   if (interaction.isButton() && interaction.customId.startsWith('quiz_')) {
@@ -1015,7 +1132,7 @@ client.on('interactionCreate', async interaction => {
     }
   }
 
-  // ── /quiztop — Bảng xếp hạng điểm quiz (liệt kê tất cả) ──
+  // ── /quiztop — Bảng xếp hạng điểm quiz (phân trang 3 người/trang) ──
   if (interaction.commandName === 'quiztop') {
     try {
       const res = await pool.query(`
@@ -1032,42 +1149,11 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ embeds: [emptyEmbed] });
       }
 
-      const embed = new EmbedBuilder()
-        .setColor(COLORS.GOLD)
-        .setTitle('🏆 BẢNG XẾP HẠNG QUIZ')
-        .setDescription(`Tổng **${res.rows.length}** người chơi`)
-        .setTimestamp();
+      const totalPages = Math.ceil(res.rows.length / QUIZTOP_PER_PAGE);
+      const embed = await buildQuizTopEmbed(res.rows, 1, totalPages);
+      const components = totalPages > 1 ? [buildQuizTopButtons(1, totalPages)] : [];
 
-      await Promise.all(res.rows.map(async (row) => {
-        try {
-          const user = await client.users.fetch(row.user_id);
-          row.username = user.username;
-        } catch {
-          row.username = `User#${row.user_id.slice(-4)}`;
-        }
-      }));
-
-      res.rows.forEach((row, idx) => {
-        const rank = getRankEmoji(idx);
-        const rankInfo = getQuizRankInfo(row.total_points);
-        const accuracy = row.total_answered > 0 
-          ? Math.round((row.correct_count / row.total_answered) * 100) 
-          : 0;
-
-        embed.addFields({
-          name: `${rank} ${row.username}`,
-          value: 
-            `\`\`\`yaml\n` +
-            `Điểm:   ${row.total_points}\n` +
-            `Rank:   ${rankInfo.current.name}\n` +
-            `Đúng:   ${row.correct_count}/${row.total_answered} (${accuracy}%)\n` +
-            `Streak: ${formatStreakEmoji(row.longest_quiz_streak)} ${row.longest_quiz_streak}\n` +
-            `\`\`\``,
-          inline: false
-        });
-      });
-
-      await interaction.reply({ embeds: [embed] });
+      await interaction.reply({ embeds: [embed], components });
     } catch (err) {
       debugLog('CMD_ERR', `Lỗi /quiztop: ${err.message}`);
       const errEmbed = new EmbedBuilder()
