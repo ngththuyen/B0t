@@ -44,6 +44,7 @@ const QUIZ_CONFIG = {
   POINTS_CORRECT: 10,
   POINTS_SPEED_BONUS: 5,
   SPEED_THRESHOLD_MS: 10000,
+  QUIZ_EXPIRY_MINUTES: 30, // ⏳ Thời gian hết hạn mỗi câu quiz
   STREAK_BONUS: [
     { streak: 3,  bonus: 5 },
     { streak: 5,  bonus: 10 },
@@ -801,7 +802,15 @@ async function sendDailyQuiz(channelId = COUNTDOWN_CHANNEL_ID) {
   }
 
   const q = res.rows[0];
-  await pool.query('UPDATE quiz_questions SET sent_at = NOW() WHERE id = $1', [q.id]);
+
+  // ⏳ Tính thời gian hết hạn (30 phút sau khi gửi)
+  const updateRes = await pool.query(
+    'UPDATE quiz_questions SET sent_at = NOW() WHERE id = $1 RETURNING sent_at',
+    [q.id]
+  );
+  const sentAt = new Date(updateRes.rows[0].sent_at);
+  const expiresAt = new Date(sentAt.getTime() + QUIZ_CONFIG.QUIZ_EXPIRY_MINUTES * 60 * 1000);
+  const expiresUnix = Math.floor(expiresAt.getTime() / 1000);
 
   const embed = new EmbedBuilder()
     .setColor(COLORS.ORANGE)
@@ -813,7 +822,8 @@ async function sendDailyQuiz(channelId = COUNTDOWN_CHANNEL_ID) {
       `**C.** ${q.options.C}\n` +
       `**D.** ${q.options.D}\n\n` +
       `💡 Mỗi câu chỉ trả lời **1 lần**!\n` +
-      `✅ Đúng: **+${QUIZ_CONFIG.POINTS_CORRECT} điểm** | Streak bonus: **+5→+50** | ⚡ Speed bonus: **+5**`
+      `✅ Đúng: **+${QUIZ_CONFIG.POINTS_CORRECT} điểm** | Streak bonus: **+5→+50** | ⚡ Speed bonus: **+5**\n\n` +
+      `⏳ **Hết hạn:** <t:${expiresUnix}:R> (<t:${expiresUnix}:T>)`
     )
     .setFooter({ text: '⏱️ Chọn đáp án bên dưới — chỉ bạn thấy kết quả!' })
     .setTimestamp();
@@ -830,7 +840,7 @@ async function sendDailyQuiz(channelId = COUNTDOWN_CHANNEL_ID) {
   );
 
   await channel.send({ embeds: [embed], components: [row] });
-  debugLog('QUIZ', `Đã gửi câu hỏi [${q.id}] lên kênh.`);
+  debugLog('QUIZ', `Đã gửi câu hỏi [${q.id}] lên kênh. Hết hạn lúc ${expiresAt.toLocaleTimeString('vi-VN')}`);
 }
 
 // ====================== XỬ LÝ THỜI GIAN & TRACKING ======================
@@ -932,20 +942,17 @@ cron.schedule('0 0 * * *', async () => {
 }, { timezone: TIMEZONE });
 
 // ── Lịch Quiz: 10 lần/ngày ──
-// Khung sáng  07h–11h : 3 lần → 07:10 | 08:55 | 10:40
-// Khung chiều 13h–17h : 2 lần → 13:20 | 16:05
-// Khung tối   19h–23h : 5 lần → 19:00 | 19:50 | 20:45 | 21:40 | 22:35
 const QUIZ_SCHEDULE = [
-  '10 7  * * *',   // 07:10 — Khởi động buổi sáng
-  '55 8  * * *',   // 08:55 — Giữa buổi sáng
-  '40 10 * * *',   // 10:40 — Cuối buổi sáng
-  '20 13 * * *',   // 13:20 — Sau giờ trưa
-  '5  16 * * *',   // 16:05 — Cuối giờ chiều
-  '0  19 * * *',   // 19:00 — Mở đầu ca tối
-  '50 19 * * *',   // 19:50 — Khởi động học
-  '45 20 * * *',   // 20:45 — Giữa ca tối
-  '40 21 * * *',   // 21:40 — Cao điểm tối
-  '35 22 * * *',   // 22:35 — Trước khi nghỉ
+  '10 7  * * *',
+  '55 8  * * *',
+  '40 10 * * *',
+  '20 13 * * *',
+  '5  16 * * *',
+  '0  19 * * *',
+  '50 19 * * *',
+  '45 20 * * *',
+  '40 21 * * *',
+  '35 22 * * *',
 ];
 
 for (const cronExpr of QUIZ_SCHEDULE) {
@@ -1043,6 +1050,23 @@ client.on('interactionCreate', async interaction => {
       return interaction.reply({ embeds: [errEmbed], ephemeral: true });
     }
 
+    // ⏳ Kiểm tra hết hạn 30 phút
+    if (q.sent_at) {
+      const sentAt = new Date(q.sent_at).getTime();
+      const expiryTime = sentAt + QUIZ_CONFIG.QUIZ_EXPIRY_MINUTES * 60 * 1000;
+      if (Date.now() > expiryTime) {
+        const errEmbed = new EmbedBuilder()
+          .setColor(COLORS.DANGER)
+          .setTitle('⏰ Hết thời gian')
+          .setDescription(
+            `Câu hỏi này đã hết hạn sau **${QUIZ_CONFIG.QUIZ_EXPIRY_MINUTES} phút**!\n` +
+            `Hãy chờ câu hỏi tiếp theo nhé.`
+          )
+          .setFooter({ text: '💡 Mỗi câu chỉ có hiệu lực trong 30 phút kể từ khi gửi.' });
+        return interaction.reply({ embeds: [errEmbed], ephemeral: true });
+      }
+    }
+
     const isCorrect = chosen === q.correct;
     
     let answerTimeMs = null;
@@ -1108,7 +1132,7 @@ client.on('interactionCreate', async interaction => {
 
   if (!interaction.isChatInputCommand()) return;
 
-  // ── /check — xem bảng xếp hạng voice ──
+  // ── /check ──
   if (interaction.commandName === 'check') {
     try {
       const res = await pool.query('SELECT day_key FROM voice_progress ORDER BY day_key DESC LIMIT 1');
@@ -1132,7 +1156,7 @@ client.on('interactionCreate', async interaction => {
     }
   }
 
-  // ── /quiztop — Bảng xếp hạng điểm quiz (phân trang 3 người/trang) ──
+  // ── /quiztop ──
   if (interaction.commandName === 'quiztop') {
     try {
       const res = await pool.query(`
@@ -1164,7 +1188,7 @@ client.on('interactionCreate', async interaction => {
     }
   }
 
-  // ── /quizprofile — Profile quiz cá nhân ──
+  // ── /quizprofile ──
   if (interaction.commandName === 'quizprofile') {
     try {
       const targetUser = interaction.options.getUser('user') || interaction.user;
@@ -1245,7 +1269,7 @@ client.on('interactionCreate', async interaction => {
     }
   }
 
-  // ── /quizhistory — Lịch sử câu đã trả lời ──
+  // ── /quizhistory ──
   if (interaction.commandName === 'quizhistory') {
     try {
       const page = interaction.options.getInteger('page') || 1;
@@ -1309,7 +1333,7 @@ client.on('interactionCreate', async interaction => {
     }
   }
 
-  // ── /debug — admin test giao diện ──
+  // ── /debug ──
   if (interaction.commandName === 'debug') {
     const mode = interaction.options.getString('mode') || 'countdown';
     if (mode === 'quiz') {
@@ -1328,7 +1352,7 @@ client.on('interactionCreate', async interaction => {
     }
   }
 
-  // ── /addquestion — admin import file JSON ──
+  // ── /addquestion ──
   if (interaction.commandName === 'addquestion') {
     await interaction.deferReply({ ephemeral: true });
 
@@ -1386,7 +1410,7 @@ client.on('interactionCreate', async interaction => {
     }
   }
 
-  // ── /quizstats — xem thống kê ngân hàng câu hỏi ──
+  // ── /quizstats ──
   if (interaction.commandName === 'quizstats') {
     try {
       const res = await pool.query(`
