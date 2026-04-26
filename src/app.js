@@ -39,41 +39,6 @@ const COLORS = {
   ORANGE:     0xf47fff,
 };
 
-// ==================== QUIZ CONFIG ====================
-const QUIZ_CONFIG = {
-  POINTS_CORRECT: 10,
-  POINTS_SPEED_BONUS: 5,
-  SPEED_THRESHOLD_MS: 10000,
-  QUIZ_EXPIRY_MINUTES: 30, // ⏳ Thời gian hết hạn mỗi câu quiz
-  STREAK_BONUS: [
-    { streak: 3,  bonus: 5 },
-    { streak: 5,  bonus: 10 },
-    { streak: 10, bonus: 25 },
-    { streak: 20, bonus: 50 },
-    { streak: 50, bonus: 100 },
-  ],
-  RANK_TIERS: [
-    { name: '🥉 Đồng',      min: 0,    color: COLORS.BRONZE },
-    { name: '🥈 Bạc',       min: 100,  color: COLORS.SILVER },
-    { name: '🥇 Vàng',      min: 300,  color: COLORS.GOLD },
-    { name: '💎 Kim Cương',  min: 600,  color: 0x00ffff },
-    { name: '👑 Tối Thượng', min: 1000, color: 0xff0000 },
-  ],
-  ACHIEVEMENTS: [
-    { id: 'first_blood', name: '🩸 First Blood', desc: 'Trả lời đúng câu đầu tiên' },
-    { id: 'streak_5',    name: '🔥 Chuỗi 5',    desc: 'Đúng 5 câu liên tiếp' },
-    { id: 'streak_10',   name: '⚡ Chuỗi 10',   desc: 'Đúng 10 câu liên tiếp' },
-    { id: 'streak_20',   name: '🌟 Chuỗi 20',   desc: 'Đúng 20 câu liên tiếp' },
-    { id: 'streak_50',   name: '👑 Thần Thánh', desc: 'Đúng 50 câu liên tiếp' },
-    { id: 'master_100',  name: '🎯 Bậc Thầy',   desc: 'Đạt 100 điểm' },
-    { id: 'master_500',  name: '🏆 Huyền Thoại', desc: 'Đạt 500 điểm' },
-    { id: 'master_1000', name: '💎 Vô Cực',     desc: 'Đạt 1000 điểm' },
-    { id: 'speed_demon', name: '⚡ Tia Chớp',   desc: 'Trả lời đúng trong 10 giây' },
-    { id: 'perfection_10', name: '💯 Hoàn Hảo', desc: 'Đúng 10 câu đầu tiên không sai' },
-    { id: 'veteran',     name: '🎖️ Cựu Chiến Binh', desc: 'Trả lời 100 câu hỏi' },
-  ]
-};
-
 // ==================== DATA CỐ ĐỊNH ====================
 const EXAMS = [
   { name: 'Kỳ thi Đánh giá Năng Lực (VACT) - Đợt 2', date: new Date('2026-05-24T08:30:00+07:00') },
@@ -348,24 +313,6 @@ function getRankColor(index) {
   return COLORS.PRIMARY;
 }
 
-// ====================== QUIZ HELPERS ======================
-function getQuizRankInfo(points) {
-  const tiers = [...QUIZ_CONFIG.RANK_TIERS].reverse();
-  const current = tiers.find(t => points >= t.min) || tiers[tiers.length - 1];
-  const nextIdx = tiers.indexOf(current) - 1;
-  const next = nextIdx >= 0 ? tiers[nextIdx] : null;
-  return { current, next };
-}
-
-function formatStreakEmoji(streak) {
-  if (streak >= 50) return '🔥🔥🔥🔥🔥';
-  if (streak >= 20) return '🔥🔥🔥🔥';
-  if (streak >= 10) return '🔥🔥🔥';
-  if (streak >= 5)  return '🔥🔥';
-  if (streak > 0)   return '🔥';
-  return '❌';
-}
-
 // ====================== DATABASE ======================
 async function initDB() {
   await pool.query(`
@@ -397,33 +344,7 @@ async function initDB() {
       chosen        TEXT NOT NULL,
       is_correct    BOOLEAN NOT NULL,
       answered_at   TIMESTAMPTZ DEFAULT NOW(),
-      points        INTEGER DEFAULT 0,
-      answer_time_ms INTEGER,
       UNIQUE(user_id, question_id)
-    );
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS quiz_scores (
-      user_id           TEXT PRIMARY KEY,
-      total_points      INTEGER DEFAULT 0,
-      correct_count     INTEGER DEFAULT 0,
-      wrong_count       INTEGER DEFAULT 0,
-      streak_count      INTEGER DEFAULT 0,
-      longest_quiz_streak INTEGER DEFAULT 0,
-      total_answered    INTEGER DEFAULT 0,
-      last_answered_at  TIMESTAMPTZ,
-      rank_tier         TEXT DEFAULT 'Unranked'
-    );
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS quiz_achievements (
-      id          SERIAL PRIMARY KEY,
-      user_id     TEXT NOT NULL,
-      badge       TEXT NOT NULL,
-      earned_at   TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE(user_id, badge)
     );
   `);
 
@@ -443,114 +364,6 @@ async function addVoiceTime(userId, seconds) {
   } catch (err) {
     debugLog('DB_ERR', `Lỗi lưu time user ${userId}: ${err.message}`);
   }
-}
-
-// ====================== QUIZ SCORING ======================
-async function calculateQuizPoints(userId, isCorrect, answerTimeMs = null) {
-  const scoreRes = await pool.query(
-    'SELECT * FROM quiz_scores WHERE user_id = $1',
-    [userId]
-  );
-  let score = scoreRes.rows[0];
-
-  if (!score) {
-    await pool.query(`
-      INSERT INTO quiz_scores (user_id, total_points, correct_count, wrong_count, streak_count, total_answered)
-      VALUES ($1, 0, 0, 0, 0, 0)
-    `, [userId]);
-    score = { total_points: 0, correct_count: 0, wrong_count: 0, streak_count: 0, longest_quiz_streak: 0, total_answered: 0 };
-  }
-
-  let points = 0;
-  let newStreak = isCorrect ? (score.streak_count || 0) + 1 : 0;
-  let newLongest = Math.max(score.longest_quiz_streak || 0, newStreak);
-
-  if (isCorrect) {
-    points = QUIZ_CONFIG.POINTS_CORRECT;
-    
-    for (const bonus of [...QUIZ_CONFIG.STREAK_BONUS].reverse()) {
-      if (newStreak >= bonus.streak) {
-        points += bonus.bonus;
-        break;
-      }
-    }
-
-    if (answerTimeMs && answerTimeMs < QUIZ_CONFIG.SPEED_THRESHOLD_MS) {
-      points += QUIZ_CONFIG.POINTS_SPEED_BONUS;
-    }
-  }
-
-  const newTotalPoints = (score.total_points || 0) + points;
-  const newCorrect = (score.correct_count || 0) + (isCorrect ? 1 : 0);
-  const newWrong = (score.wrong_count || 0) + (isCorrect ? 0 : 1);
-  const newTotalAnswered = (score.total_answered || 0) + 1;
-
-  await pool.query(`
-    INSERT INTO quiz_scores (user_id, total_points, correct_count, wrong_count, streak_count, longest_quiz_streak, total_answered, last_answered_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-    ON CONFLICT (user_id) DO UPDATE SET
-      total_points = EXCLUDED.total_points,
-      correct_count = EXCLUDED.correct_count,
-      wrong_count = EXCLUDED.wrong_count,
-      streak_count = EXCLUDED.streak_count,
-      longest_quiz_streak = GREATEST(quiz_scores.longest_quiz_streak, EXCLUDED.longest_quiz_streak),
-      total_answered = EXCLUDED.total_answered,
-      last_answered_at = NOW()
-  `, [userId, newTotalPoints, newCorrect, newWrong, newStreak, newLongest, newTotalAnswered]);
-
-  const rankInfo = getQuizRankInfo(newTotalPoints);
-  if (rankInfo.current) {
-    await pool.query(
-      'UPDATE quiz_scores SET rank_tier = $1 WHERE user_id = $2',
-      [rankInfo.current.name, userId]
-    );
-  }
-
-  return { 
-    points, 
-    newStreak, 
-    newLongest, 
-    totalPoints: newTotalPoints, 
-    isCorrect,
-    correctCount: newCorrect,
-    wrongCount: newWrong,
-    totalAnswered: newTotalAnswered
-  };
-}
-
-async function checkAchievements(userId, stats) {
-  const earned = [];
-  const existing = await pool.query(
-    'SELECT badge FROM quiz_achievements WHERE user_id = $1',
-    [userId]
-  );
-  const existingSet = new Set(existing.rows.map(r => r.badge));
-
-  const checks = [
-    { id: 'first_blood', condition: stats.correctCount >= 1 },
-    { id: 'streak_5',    condition: stats.newStreak >= 5 },
-    { id: 'streak_10',   condition: stats.newStreak >= 10 },
-    { id: 'streak_20',   condition: stats.newStreak >= 20 },
-    { id: 'streak_50',   condition: stats.newStreak >= 50 },
-    { id: 'master_100',  condition: stats.totalPoints >= 100 },
-    { id: 'master_500',  condition: stats.totalPoints >= 500 },
-    { id: 'master_1000', condition: stats.totalPoints >= 1000 },
-    { id: 'speed_demon', condition: stats.answerTimeMs < QUIZ_CONFIG.SPEED_THRESHOLD_MS && stats.isCorrect },
-    { id: 'perfection_10', condition: stats.correctCount >= 10 && stats.wrongCount === 0 },
-    { id: 'veteran',     condition: stats.totalAnswered >= 100 },
-  ];
-
-  for (const check of checks) {
-    if (check.condition && !existingSet.has(check.id)) {
-      await pool.query(
-        'INSERT INTO quiz_achievements (user_id, badge) VALUES ($1, $2)',
-        [userId, check.id]
-      );
-      const ach = QUIZ_CONFIG.ACHIEVEMENTS.find(a => a.id === check.id);
-      if (ach) earned.push(ach);
-    }
-  }
-  return earned;
 }
 
 // ====================== LEADERBOARD EMBEDS ======================
@@ -685,75 +498,6 @@ function buildEnglishTipEmbed() {
     .setTimestamp();
 }
 
-// ====================== QUIZTOP PAGINATION ======================
-const QUIZTOP_PER_PAGE = 3;
-
-async function buildQuizTopEmbed(rows, page, totalPages) {
-  const startIdx = (page - 1) * QUIZTOP_PER_PAGE;
-  const pageRows = rows.slice(startIdx, startIdx + QUIZTOP_PER_PAGE);
-
-  const embed = new EmbedBuilder()
-    .setColor(COLORS.GOLD)
-    .setTitle('🏆 BẢNG XẾP HẠNG QUIZ')
-    .setDescription(`Tổng **${rows.length}** người chơi | Trang **${page}/${totalPages}**`)
-    .setTimestamp();
-
-  await Promise.all(pageRows.map(async (row) => {
-    try {
-      const user = await client.users.fetch(row.user_id);
-      row.username = user.username;
-    } catch {
-      row.username = `User#${row.user_id.slice(-4)}`;
-    }
-  }));
-
-  pageRows.forEach((row, idx) => {
-    const globalIdx = startIdx + idx;
-    const rank = getRankEmoji(globalIdx);
-    const rankInfo = getQuizRankInfo(row.total_points);
-    const accuracy = row.total_answered > 0
-      ? Math.round((row.correct_count / row.total_answered) * 100)
-      : 0;
-
-    embed.addFields({
-      name: `${rank} ${row.username}`,
-      value:
-        `\`\`\`yaml\n` +
-        `Điểm:   ${row.total_points}\n` +
-        `Rank:   ${rankInfo.current.name}\n` +
-        `Đúng:   ${row.correct_count}/${row.total_answered} (${accuracy}%)\n` +
-        `Streak: ${formatStreakEmoji(row.longest_quiz_streak)} ${row.longest_quiz_streak}\n` +
-        `\`\`\``,
-      inline: false
-    });
-  });
-
-  embed.setFooter({ text: `Trang ${page}/${totalPages} · Dùng nút bên dưới để chuyển trang` });
-  return embed;
-}
-
-function buildQuizTopButtons(page, totalPages) {
-  const prevBtn = new ButtonBuilder()
-    .setCustomId(`quiztop_page_${page - 1}`)
-    .setLabel('◀ Trước')
-    .setStyle(ButtonStyle.Secondary)
-    .setDisabled(page <= 1);
-
-  const pageBtn = new ButtonBuilder()
-    .setCustomId('quiztop_page_info')
-    .setLabel(`${page} / ${totalPages}`)
-    .setStyle(ButtonStyle.Primary)
-    .setDisabled(true);
-
-  const nextBtn = new ButtonBuilder()
-    .setCustomId(`quiztop_page_${page + 1}`)
-    .setLabel('Sau ▶')
-    .setStyle(ButtonStyle.Secondary)
-    .setDisabled(page >= totalPages);
-
-  return new ActionRowBuilder().addComponents(prevBtn, pageBtn, nextBtn);
-}
-
 // ====================== QUIZ FEATURE ======================
 async function importQuestionsFromJSON(questions) {
   let inserted = 0;
@@ -803,14 +547,11 @@ async function sendDailyQuiz(channelId = COUNTDOWN_CHANNEL_ID) {
 
   const q = res.rows[0];
 
-  // ⏳ Tính thời gian hết hạn (30 phút sau khi gửi)
-  const updateRes = await pool.query(
-    'UPDATE quiz_questions SET sent_at = NOW() WHERE id = $1 RETURNING sent_at',
+  // Đánh dấu đã gửi (không dùng cho expiry, chỉ để tránh gửi trùng)
+  await pool.query(
+    'UPDATE quiz_questions SET sent_at = NOW() WHERE id = $1',
     [q.id]
   );
-  const sentAt = new Date(updateRes.rows[0].sent_at);
-  const expiresAt = new Date(sentAt.getTime() + QUIZ_CONFIG.QUIZ_EXPIRY_MINUTES * 60 * 1000);
-  const expiresUnix = Math.floor(expiresAt.getTime() / 1000);
 
   const embed = new EmbedBuilder()
     .setColor(COLORS.ORANGE)
@@ -821,9 +562,7 @@ async function sendDailyQuiz(channelId = COUNTDOWN_CHANNEL_ID) {
       `**B.** ${q.options.B}\n` +
       `**C.** ${q.options.C}\n` +
       `**D.** ${q.options.D}\n\n` +
-      `💡 Mỗi câu chỉ trả lời **1 lần**!\n` +
-      `✅ Đúng: **+${QUIZ_CONFIG.POINTS_CORRECT} điểm** | Streak bonus: **+5→+50** | ⚡ Speed bonus: **+5**\n\n` +
-      `⏳ **Hết hạn:** <t:${expiresUnix}:R> (<t:${expiresUnix}:T>)`
+      `💡 Mỗi câu chỉ trả lời **1 lần**!`
     )
     .setFooter({ text: '⏱️ Chọn đáp án bên dưới — chỉ bạn thấy kết quả!' })
     .setTimestamp();
@@ -840,7 +579,7 @@ async function sendDailyQuiz(channelId = COUNTDOWN_CHANNEL_ID) {
   );
 
   await channel.send({ embeds: [embed], components: [row] });
-  debugLog('QUIZ', `Đã gửi câu hỏi [${q.id}] lên kênh. Hết hạn lúc ${expiresAt.toLocaleTimeString('vi-VN')}`);
+  debugLog('QUIZ', `Đã gửi câu hỏi [${q.id}] lên kênh.`);
 }
 
 // ====================== XỬ LÝ THỜI GIAN & TRACKING ======================
@@ -941,18 +680,23 @@ cron.schedule('0 0 * * *', async () => {
   debugLog('COUNTDOWN', 'Đã gửi thông báo đếm ngược + English Tip lúc nửa đêm.');
 }, { timezone: TIMEZONE });
 
-// ── Lịch Quiz: 10 lần/ngày ──
+// ── Lịch Quiz: 15 lần/ngày (dàn trải đều) ──
 const QUIZ_SCHEDULE = [
-  '10 7  * * *',
-  '55 8  * * *',
-  '40 10 * * *',
-  '20 13 * * *',
-  '5  16 * * *',
-  '0  19 * * *',
-  '50 19 * * *',
-  '45 20 * * *',
-  '40 21 * * *',
-  '35 22 * * *',
+  '0  6  * * *',   // 06:00 — Sáng sớm
+  '10 7  * * *',   // 07:10
+  '55 8  * * *',   // 08:55
+  '40 10 * * *',   // 10:40
+  '30 11 * * *',   // 11:30 — Trước giờ nghỉ trưa
+  '20 13 * * *',   // 13:20
+  '30 14 * * *',   // 14:30 — Đầu giờ chiều
+  '5  16 * * *',   // 16:05
+  '30 17 * * *',   // 17:30 — Sau giờ tan học/làm
+  '0  19 * * *',   // 19:00
+  '50 19 * * *',   // 19:50
+  '45 20 * * *',   // 20:45
+  '40 21 * * *',   // 21:40
+  '35 22 * * *',   // 22:35
+  '0  23 * * *',   // 23:00 — Khuya
 ];
 
 for (const cronExpr of QUIZ_SCHEDULE) {
@@ -984,35 +728,6 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
 // ====================== SỰ KIỆN INTERACTION ======================
 client.on('interactionCreate', async interaction => {
-
-  // ── Xử lý nút phân trang /quiztop ──
-  if (interaction.isButton() && interaction.customId.startsWith('quiztop_page_')) {
-    const targetPage = parseInt(interaction.customId.split('_')[2]);
-    if (isNaN(targetPage) || targetPage < 1) return;
-
-    try {
-      await interaction.deferUpdate();
-
-      const res = await pool.query(`
-        SELECT * FROM quiz_scores
-        WHERE total_answered > 0
-        ORDER BY total_points DESC
-      `);
-
-      if (res.rows.length === 0) return;
-
-      const totalPages = Math.ceil(res.rows.length / QUIZTOP_PER_PAGE);
-      const page = Math.min(Math.max(targetPage, 1), totalPages);
-
-      const embed = await buildQuizTopEmbed(res.rows, page, totalPages);
-      const components = totalPages > 1 ? [buildQuizTopButtons(page, totalPages)] : [];
-
-      await interaction.editReply({ embeds: [embed], components });
-    } catch (err) {
-      debugLog('CMD_ERR', `Lỗi nút quiztop: ${err.message}`);
-    }
-    return;
-  }
 
   // ── Xử lý nút bấm quiz ──
   if (interaction.isButton() && interaction.customId.startsWith('quiz_')) {
@@ -1046,85 +761,28 @@ client.on('interactionCreate', async interaction => {
       const errEmbed = new EmbedBuilder()
         .setColor(COLORS.DANGER)
         .setTitle('❌ Lỗi')
-        .setDescription('Câu hỏi này đã hết hạn hoặc bị lỗi dữ liệu!');
+        .setDescription('Câu hỏi này không tồn tại hoặc bị lỗi dữ liệu!');
       return interaction.reply({ embeds: [errEmbed], ephemeral: true });
     }
 
-    // ⏳ Kiểm tra hết hạn 30 phút
-    if (q.sent_at) {
-      const sentAt = new Date(q.sent_at).getTime();
-      const expiryTime = sentAt + QUIZ_CONFIG.QUIZ_EXPIRY_MINUTES * 60 * 1000;
-      if (Date.now() > expiryTime) {
-        const errEmbed = new EmbedBuilder()
-          .setColor(COLORS.DANGER)
-          .setTitle('⏰ Hết thời gian')
-          .setDescription(
-            `Câu hỏi này đã hết hạn sau **${QUIZ_CONFIG.QUIZ_EXPIRY_MINUTES} phút**!\n` +
-            `Hãy chờ câu hỏi tiếp theo nhé.`
-          )
-          .setFooter({ text: '💡 Mỗi câu chỉ có hiệu lực trong 30 phút kể từ khi gửi.' });
-        return interaction.reply({ embeds: [errEmbed], ephemeral: true });
-      }
-    }
-
     const isCorrect = chosen === q.correct;
-    
-    let answerTimeMs = null;
-    const messageTime = interaction.message?.createdTimestamp;
-    if (messageTime) {
-      answerTimeMs = Date.now() - messageTime;
-    }
 
     await pool.query(`
-      INSERT INTO quiz_attempts (user_id, question_id, chosen, is_correct, points, answer_time_ms)
-      VALUES ($1, $2, $3, $4, $5, $6)
-    `, [interaction.user.id, qId, chosen, isCorrect, isCorrect ? QUIZ_CONFIG.POINTS_CORRECT : 0, answerTimeMs]);
-
-    const stats = await calculateQuizPoints(interaction.user.id, isCorrect, answerTimeMs);
-    
-    const newAchievements = await checkAchievements(interaction.user.id, {
-      ...stats,
-      answerTimeMs,
-      correctCount: stats.correctCount,
-      wrongCount: stats.wrongCount,
-      totalAnswered: stats.totalAnswered
-    });
-
-    const rankInfo = getQuizRankInfo(stats.totalPoints);
-    
-    let description = 
-      `Bạn chọn: **${chosen}** — ${q.options[chosen]}\n\n` +
-      `Đáp án đúng: **${q.correct}** — ${q.options[q.correct]}\n\n`;
-
-    if (isCorrect) {
-      description += `🎉 **+${stats.points} điểm**\n`;
-      if (stats.newStreak > 1) {
-        description += `${formatStreakEmoji(stats.newStreak)} Streak: **${stats.newStreak}** câu đúng liên tiếp\n`;
-      }
-      if (answerTimeMs && answerTimeMs < QUIZ_CONFIG.SPEED_THRESHOLD_MS) {
-        description += `⚡ Bonus tốc độ: +${QUIZ_CONFIG.POINTS_SPEED_BONUS} điểm\n`;
-      }
-    } else {
-      description += `💔 Streak reset về 0\n`;
-    }
-
-    description += `\n🏆 Tổng điểm: **${stats.totalPoints}** | Rank: **${rankInfo.current.name}**`;
-
-    if (newAchievements.length > 0) {
-      description += `\n\n🎖️ **Thành tựu mới:**\n`;
-      newAchievements.forEach(ach => {
-        description += `• ${ach.name} — ${ach.desc}\n`;
-      });
-    }
+      INSERT INTO quiz_attempts (user_id, question_id, chosen, is_correct)
+      VALUES ($1, $2, $3, $4)
+    `, [interaction.user.id, qId, chosen, isCorrect]);
 
     const replyEmbed = new EmbedBuilder()
       .setTitle(isCorrect ? '✅ CHÍNH XÁC!' : '❌ RẤT TIẾC!')
       .setColor(isCorrect ? COLORS.SUCCESS : COLORS.DANGER)
-      .setDescription(description)
+      .setDescription(
+        `Bạn chọn: **${chosen}** — ${q.options[chosen]}\n\n` +
+        `Đáp án đúng: **${q.correct}** — ${q.options[q.correct]}`
+      )
       .setFooter({
         text: isCorrect
-          ? `${formatStreakEmoji(stats.newStreak)} Streak: ${stats.newStreak} | Rank: ${rankInfo.current.name}`
-          : '💪 Cố gắng lên! Streak sẽ quay lại thôi!'
+          ? 'Tuyệt vời! Hãy tiếp tục phát huy nhé!'
+          : 'Cố gắng lên lần sau nhé!'
       });
 
     return interaction.reply({ embeds: [replyEmbed], ephemeral: true });
@@ -1152,183 +810,6 @@ client.on('interactionCreate', async interaction => {
         .setColor(COLORS.DANGER)
         .setTitle('❌ Lỗi hệ thống')
         .setDescription('Đã xảy ra lỗi, vui lòng thử lại sau.');
-      await interaction.reply({ embeds: [errEmbed], ephemeral: true });
-    }
-  }
-
-  // ── /quiztop ──
-  if (interaction.commandName === 'quiztop') {
-    try {
-      const res = await pool.query(`
-        SELECT * FROM quiz_scores
-        WHERE total_answered > 0
-        ORDER BY total_points DESC
-      `);
-
-      if (res.rows.length === 0) {
-        const emptyEmbed = new EmbedBuilder()
-          .setColor(COLORS.INFO)
-          .setTitle('📊 Bảng Xếp Hạng Quiz')
-          .setDescription('Chưa có ai tham gia Quiz! Hãy là người đầu tiên!');
-        return interaction.reply({ embeds: [emptyEmbed] });
-      }
-
-      const totalPages = Math.ceil(res.rows.length / QUIZTOP_PER_PAGE);
-      const embed = await buildQuizTopEmbed(res.rows, 1, totalPages);
-      const components = totalPages > 1 ? [buildQuizTopButtons(1, totalPages)] : [];
-
-      await interaction.reply({ embeds: [embed], components });
-    } catch (err) {
-      debugLog('CMD_ERR', `Lỗi /quiztop: ${err.message}`);
-      const errEmbed = new EmbedBuilder()
-        .setColor(COLORS.DANGER)
-        .setTitle('❌ Lỗi hệ thống')
-        .setDescription('Không thể lấy bảng xếp hạng.');
-      await interaction.reply({ embeds: [errEmbed], ephemeral: true });
-    }
-  }
-
-  // ── /quizprofile ──
-  if (interaction.commandName === 'quizprofile') {
-    try {
-      const targetUser = interaction.options.getUser('user') || interaction.user;
-      
-      const scoreRes = await pool.query(
-        'SELECT * FROM quiz_scores WHERE user_id = $1',
-        [targetUser.id]
-      );
-      const score = scoreRes.rows[0];
-
-      if (!score || score.total_answered === 0) {
-        const emptyEmbed = new EmbedBuilder()
-          .setColor(COLORS.INFO)
-          .setTitle(`📊 Profile Quiz — ${targetUser.username}`)
-          .setDescription(
-            targetUser.id === interaction.user.id
-              ? 'Bạn chưa tham gia Quiz nào!\nHãy trả lời câu hỏi để bắt đầu tích lũy điểm.'
-              : `${targetUser.username} chưa tham gia Quiz nào.`
-          );
-        return interaction.reply({ embeds: [emptyEmbed] });
-      }
-
-      const rankInfo = getQuizRankInfo(score.total_points);
-      const accuracy = score.total_answered > 0 
-        ? Math.round((score.correct_count / score.total_answered) * 100) 
-        : 0;
-      
-      const achRes = await pool.query(
-        'SELECT badge FROM quiz_achievements WHERE user_id = $1 ORDER BY earned_at DESC',
-        [targetUser.id]
-      );
-      const achievements = achRes.rows.map(r => 
-        QUIZ_CONFIG.ACHIEVEMENTS.find(a => a.id === r.badge)
-      ).filter(Boolean);
-
-      const embed = new EmbedBuilder()
-        .setColor(rankInfo.current.color)
-        .setTitle(`📊 Profile Quiz — ${targetUser.username}`)
-        .setThumbnail(targetUser.displayAvatarURL({ size: 128 }))
-        .addFields(
-          { name: '🏆 Tổng điểm', value: `**${score.total_points}**`, inline: true },
-          { name: '🎖️ Rank', value: `**${rankInfo.current.name}**`, inline: true },
-          { name: '✅ Tỷ lệ đúng', value: `**${accuracy}%**`, inline: true },
-          { name: '🔥 Streak hiện tại', value: `**${score.streak_count}**`, inline: true },
-          { name: '🌟 Streak cao nhất', value: `**${score.longest_quiz_streak}**`, inline: true },
-          { name: '📝 Tổng câu đã làm', value: `**${score.total_answered}**`, inline: true }
-        );
-
-      if (rankInfo.next) {
-        const progress = createProgressBar(score.total_points, rankInfo.next.min, 12);
-        embed.addFields({
-          name: `📈 Tiến độ đến ${rankInfo.next.name}`,
-          value: `\`${progress}\` (${score.total_points}/${rankInfo.next.min})`,
-          inline: false
-        });
-      }
-
-      if (achievements.length > 0) {
-        embed.addFields({
-          name: `🎖️ Thành tựu (${achievements.length})`,
-          value: achievements.slice(0, 8).map(a => `${a.name}`).join(' | '),
-          inline: false
-        });
-      }
-
-      embed.setFooter({ 
-        text: `Tham gia lần cuối: ${score.last_answered_at ? new Date(score.last_answered_at).toLocaleDateString('vi-VN') : 'Chưa có'}` 
-      }).setTimestamp();
-
-      await interaction.reply({ embeds: [embed] });
-    } catch (err) {
-      debugLog('CMD_ERR', `Lỗi /quizprofile: ${err.message}`);
-      const errEmbed = new EmbedBuilder()
-        .setColor(COLORS.DANGER)
-        .setTitle('❌ Lỗi hệ thống')
-        .setDescription('Không thể lấy thông tin profile.');
-      await interaction.reply({ embeds: [errEmbed], ephemeral: true });
-    }
-  }
-
-  // ── /quizhistory ──
-  if (interaction.commandName === 'quizhistory') {
-    try {
-      const page = interaction.options.getInteger('page') || 1;
-      const perPage = 5;
-      const offset = (page - 1) * perPage;
-
-      const res = await pool.query(`
-        SELECT qa.*, qq.question, qq.options, qq.correct
-        FROM quiz_attempts qa
-        JOIN quiz_questions qq ON qa.question_id = qq.id
-        WHERE qa.user_id = $1
-        ORDER BY qa.answered_at DESC
-        LIMIT $2 OFFSET $3
-      `, [interaction.user.id, perPage, offset]);
-
-      const countRes = await pool.query(
-        'SELECT COUNT(*) FROM quiz_attempts WHERE user_id = $1',
-        [interaction.user.id]
-      );
-      const total = parseInt(countRes.rows[0].count);
-      const totalPages = Math.ceil(total / perPage);
-
-      if (res.rows.length === 0) {
-        const emptyEmbed = new EmbedBuilder()
-          .setColor(COLORS.INFO)
-          .setTitle('📜 Lịch Sử Quiz')
-          .setDescription('Bạn chưa trả lời câu nào!');
-        return interaction.reply({ embeds: [emptyEmbed], ephemeral: true });
-      }
-
-      const embed = new EmbedBuilder()
-        .setColor(COLORS.PRIMARY)
-        .setTitle(`📜 Lịch Sử Quiz — Trang ${page}/${totalPages}`)
-        .setDescription(`Tổng: **${total}** câu đã trả lời`)
-        .setTimestamp();
-
-      res.rows.forEach((row, idx) => {
-        const status = row.is_correct ? '✅' : '❌';
-        const date = new Date(row.answered_at).toLocaleDateString('vi-VN', {
-          day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
-        });
-        
-        embed.addFields({
-          name: `${status} Câu ${offset + idx + 1}`,
-          value: 
-            `> ${row.question.substring(0, 80)}${row.question.length > 80 ? '...' : ''}\n` +
-            `> Bạn chọn: **${row.chosen}** | Đáp án: **${row.correct}**\n` +
-            `> 🕐 ${date} | ${row.is_correct ? `+${row.points} điểm` : '0 điểm'}`,
-          inline: false
-        });
-      });
-
-      await interaction.reply({ embeds: [embed], ephemeral: true });
-    } catch (err) {
-      debugLog('CMD_ERR', `Lỗi /quizhistory: ${err.message}`);
-      const errEmbed = new EmbedBuilder()
-        .setColor(COLORS.DANGER)
-        .setTitle('❌ Lỗi hệ thống')
-        .setDescription('Không thể lấy lịch sử.');
       await interaction.reply({ embeds: [errEmbed], ephemeral: true });
     }
   }
@@ -1461,28 +942,6 @@ client.once('ready', async () => {
       .setDescription('Xem thống kê thời gian học của ca hiện tại'),
 
     new SlashCommandBuilder()
-      .setName('quiztop')
-      .setDescription('Xem bảng xếp hạng điểm Quiz'),
-
-    new SlashCommandBuilder()
-      .setName('quizprofile')
-      .setDescription('Xem thống kê Quiz của bạn hoặc người khác')
-      .addUserOption(opt =>
-        opt.setName('user')
-          .setDescription('Người dùng (để trống = bản thân)')
-          .setRequired(false)
-      ),
-
-    new SlashCommandBuilder()
-      .setName('quizhistory')
-      .setDescription('Xem lịch sử các câu hỏi đã trả lời')
-      .addIntegerOption(opt =>
-        opt.setName('page')
-          .setDescription('Trang (mỗi trang 5 câu)')
-          .setRequired(false)
-      ),
-
-    new SlashCommandBuilder()
       .setName('debug')
       .setDescription('[Admin] Test giao diện bot')
       .addStringOption(opt =>
@@ -1517,7 +976,7 @@ client.once('ready', async () => {
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
     await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-    debugLog('READY', 'Đã đăng ký: /check, /quiztop, /quizprofile, /quizhistory, /debug, /addquestion, /quizstats');
+    debugLog('READY', 'Đã đăng ký: /check, /debug, /addquestion, /quizstats');
   } catch (error) {
     debugLog('ERR', 'Lỗi đăng ký lệnh: ' + error.message);
   }
