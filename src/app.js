@@ -1,6 +1,7 @@
 import {
   Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder,
-  REST, Routes, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle
+  REST, Routes, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  MessageFlags
 } from 'discord.js';
 import dotenv from 'dotenv';
 import cron from 'node-cron';
@@ -606,8 +607,8 @@ async function checkAchievements(userId, stats, answerHour = null) {
     { id: 'veteran_50',     condition: stats.totalAnswered >= 50 },
     { id: 'veteran_100',    condition: stats.totalAnswered >= 100 },
     { id: 'veteran_500',    condition: stats.totalAnswered >= 500 },
-    { id: 'early_bird',     condition: isCorrect && answerHour !== null && answerHour >= 5 && answerHour < 8 },
-    { id: 'night_owl',      condition: isCorrect && answerHour !== null && answerHour >= 22 },
+    { id: 'early_bird',     condition: stats.isCorrect && answerHour !== null && answerHour >= 5 && answerHour < 8 },
+    { id: 'night_owl',      condition: stats.isCorrect && answerHour !== null && answerHour >= 22 },
   ];
 
   for (const check of checks) {
@@ -1112,7 +1113,7 @@ client.on('interactionCreate', async interaction => {
           `Kết quả: ${prev.is_correct ? '✅ Đúng' : '❌ Sai'}`
         )
         .setFooter({ text: 'Mỗi câu chỉ được trả lời 1 lần!' });
-      return interaction.reply({ embeds: [errEmbed], ephemeral: true });
+      return interaction.reply({ embeds: [errEmbed], flags: MessageFlags.Ephemeral });
     }
 
     const res = await pool.query('SELECT * FROM quiz_questions WHERE id = $1', [qId]);
@@ -1123,7 +1124,7 @@ client.on('interactionCreate', async interaction => {
         .setColor(COLORS.DANGER)
         .setTitle('❌ Lỗi')
         .setDescription('Câu hỏi này không tồn tại hoặc bị lỗi dữ liệu!');
-      return interaction.reply({ embeds: [errEmbed], ephemeral: true });
+      return interaction.reply({ embeds: [errEmbed], flags: MessageFlags.Ephemeral });
     }
 
     // Không kiểm tra expiry - câu hỏi tồn tại vĩnh viễn
@@ -1204,7 +1205,7 @@ client.on('interactionCreate', async interaction => {
           : '💪 Cố gắng lên! Streak sẽ quay lại thôi!'
       });
 
-    return interaction.reply({ embeds: [replyEmbed], ephemeral: true });
+    return interaction.reply({ embeds: [replyEmbed], flags: MessageFlags.Ephemeral });
   }
 
   if (!interaction.isChatInputCommand()) return;
@@ -1219,7 +1220,7 @@ client.on('interactionCreate', async interaction => {
           .setColor(COLORS.WARNING)
           .setTitle('📭 Chưa có dữ liệu')
           .setDescription('Chưa có dữ liệu ghi nhận nào. Hãy tham gia voice channel trong ca học để bắt đầu!');
-        return interaction.reply({ embeds: [emptyEmbed], ephemeral: true });
+        return interaction.reply({ embeds: [emptyEmbed], flags: MessageFlags.Ephemeral });
       }
       const embed = await buildLeaderboardEmbed(targetDayKey);
       await interaction.reply({ embeds: [embed] });
@@ -1229,7 +1230,7 @@ client.on('interactionCreate', async interaction => {
         .setColor(COLORS.DANGER)
         .setTitle('❌ Lỗi hệ thống')
         .setDescription('Đã xảy ra lỗi, vui lòng thử lại sau.');
-      await interaction.reply({ embeds: [errEmbed], ephemeral: true });
+      await interaction.reply({ embeds: [errEmbed], flags: MessageFlags.Ephemeral });
     }
   }
 
@@ -1261,7 +1262,7 @@ client.on('interactionCreate', async interaction => {
         .setColor(COLORS.DANGER)
         .setTitle('❌ Lỗi hệ thống')
         .setDescription('Không thể lấy bảng xếp hạng.');
-      await interaction.reply({ embeds: [errEmbed], ephemeral: true });
+      await interaction.reply({ embeds: [errEmbed], flags: MessageFlags.Ephemeral });
     }
   }
 
@@ -1342,7 +1343,7 @@ client.on('interactionCreate', async interaction => {
         .setColor(COLORS.DANGER)
         .setTitle('❌ Lỗi hệ thống')
         .setDescription('Không thể lấy thông tin profile.');
-      await interaction.reply({ embeds: [errEmbed], ephemeral: true });
+      await interaction.reply({ embeds: [errEmbed], flags: MessageFlags.Ephemeral });
     }
   }
 
@@ -1374,7 +1375,7 @@ client.on('interactionCreate', async interaction => {
           .setColor(COLORS.INFO)
           .setTitle('📜 Lịch Sử Quiz')
           .setDescription('Bạn chưa trả lời câu nào!');
-        return interaction.reply({ embeds: [emptyEmbed], ephemeral: true });
+        return interaction.reply({ embeds: [emptyEmbed], flags: MessageFlags.Ephemeral });
       }
 
       const embed = new EmbedBuilder()
@@ -1399,14 +1400,14 @@ client.on('interactionCreate', async interaction => {
         });
       });
 
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     } catch (err) {
       debugLog('CMD_ERR', `Lỗi /quizhistory: ${err.message}`);
       const errEmbed = new EmbedBuilder()
         .setColor(COLORS.DANGER)
         .setTitle('❌ Lỗi hệ thống')
         .setDescription('Không thể lấy lịch sử.');
-      await interaction.reply({ embeds: [errEmbed], ephemeral: true });
+      await interaction.reply({ embeds: [errEmbed], flags: MessageFlags.Ephemeral });
     }
   }
 
@@ -1417,7 +1418,7 @@ client.on('interactionCreate', async interaction => {
       const loadingEmbed = new EmbedBuilder()
         .setColor(COLORS.INFO)
         .setDescription('⏳ Đang tải câu hỏi thử...');
-      await interaction.reply({ embeds: [loadingEmbed], ephemeral: true });
+      await interaction.reply({ embeds: [loadingEmbed], flags: MessageFlags.Ephemeral });
       await sendDailyQuiz(interaction.channelId);
     } else if (mode === 'countdown') {
       await interaction.reply({ embeds: [buildCountdownEmbed()] });
@@ -1425,13 +1426,13 @@ client.on('interactionCreate', async interaction => {
       await interaction.reply({ embeds: [buildEnglishTipEmbed()] });
     } else {
       await interaction.reply({ embeds: [buildCountdownEmbed()] });
-      await interaction.followUp({ embeds: [buildEnglishTipEmbed()], ephemeral: true });
+      await interaction.followUp({ embeds: [buildEnglishTipEmbed()], flags: MessageFlags.Ephemeral });
     }
   }
 
   // ── /addquestion ──
   if (interaction.commandName === 'addquestion') {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const attachment = interaction.options.getAttachment('file');
 
@@ -1514,19 +1515,19 @@ client.on('interactionCreate', async interaction => {
         )
         .setTimestamp();
 
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     } catch (err) {
       const errEmbed = new EmbedBuilder()
         .setColor(COLORS.DANGER)
         .setTitle('❌ Lỗi hệ thống')
         .setDescription('Không thể lấy thống kê, vui lòng thử lại sau.');
-      await interaction.reply({ embeds: [errEmbed], ephemeral: true });
+      await interaction.reply({ embeds: [errEmbed], flags: MessageFlags.Ephemeral });
     }
   }
 });
 
 // ====================== KHỞI ĐỘNG ======================
-client.once('ready', async () => {
+client.once('clientReady', async () => {
   console.log('='.repeat(50));
   debugLog('READY', `Bot ${client.user.tag} đã online!`);
 
